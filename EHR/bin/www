@@ -1,0 +1,125 @@
+#!/usr/bin/env node
+
+require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
+
+// Server refuses to start without the OpenAI key — every AI route would fail
+// on the first request and the error would only surface then, not at boot.
+if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.trim() === '') {
+  console.error('[FATAL] OPENAI_API_KEY is not set or is empty. Set it in Intern/.env and restart.');
+  process.exit(1);
+}
+
+/**
+ * Module dependencies.
+ */
+
+var app = require('../app');
+var debug = require('debug')('ehr:server');
+var http = require('http');
+var mongoose = require('mongoose');
+
+/**
+ * Connect to MongoDB.
+ */
+var mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/ehr';
+
+// serverSelectionTimeoutMS: prevents hanging indefinitely when the host is
+// unreachable. socketTimeoutMS: closes idle sockets after 45 s. family:4
+// forces IPv4 to avoid DNS resolution failures on hosts with inconsistent
+// IPv6 routing.
+mongoose.connect(mongoUri, {
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+  family: 4
+})
+  .catch(function (err) {
+    console.error('[MongoDB] Initial connection failed:', err.message);
+  });
+
+mongoose.connection.on('connected', function () {
+  console.log('[MongoDB] Connected to ' + mongoUri);
+});
+mongoose.connection.on('error', function (err) {
+  console.error('[MongoDB] Connection error:', err.message);
+});
+mongoose.connection.on('disconnected', function () {
+  console.warn('[MongoDB] Disconnected. Mongoose will attempt to reconnect automatically.');
+});
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+
+var server = http.createServer(app);
+
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+
+server.listen(port);
+server.on('error', onError);
+server.on('listening', onListening);
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    return val;
+  }
+
+  if (port >= 0) {
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+}
