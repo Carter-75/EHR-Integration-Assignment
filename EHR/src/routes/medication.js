@@ -12,7 +12,7 @@ var openaiService = require('../services/openaiService');
  *
  * Accepts conflicting medication records from multiple sources and returns
  * a reconciled medication with confidence score and clinical reasoning,
- * powered by OpenAI. The result is persisted to MongoDB.
+ * powered by OpenAI. 
  */
 router.post('/api/reconcile/medication', async function (req, res, next) {
     var body = req.body;
