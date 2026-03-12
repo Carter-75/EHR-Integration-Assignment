@@ -16,35 +16,11 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.trim() === '') {
 var app = require('../app');
 var debug = require('debug')('ehr:server');
 var http = require('http');
-var mongoose = require('mongoose');
 
 /**
- * Connect to MongoDB.
+ * Initialize In-Memory Store.
  */
-var mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/ehr';
-
-// serverSelectionTimeoutMS: prevents hanging indefinitely when the host is
-// unreachable. socketTimeoutMS: closes idle sockets after 45 s. family:4
-// forces IPv4 to avoid DNS resolution failures on hosts with inconsistent
-// IPv6 routing.
-mongoose.connect(mongoUri, {
-  serverSelectionTimeoutMS: 5000,
-  socketTimeoutMS: 45000,
-  family: 4
-})
-  .catch(function (err) {
-    console.error('[MongoDB] Initial connection failed:', err.message);
-  });
-
-mongoose.connection.on('connected', function () {
-  console.log('[MongoDB] Connected to ' + mongoUri);
-});
-mongoose.connection.on('error', function (err) {
-  console.error('[MongoDB] Connection error:', err.message);
-});
-mongoose.connection.on('disconnected', function () {
-  console.warn('[MongoDB] Disconnected. Mongoose will attempt to reconnect automatically.');
-});
+console.log('[In-Memory Store] Ready');
 
 /**
  * Get port from environment and store in Express.

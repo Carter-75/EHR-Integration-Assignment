@@ -39,19 +39,21 @@ router.post('/api/validate/data-quality', async function (req, res, next) {
         // response — the client always receives the computed clinical data.
         var responsePayload = JSON.parse(JSON.stringify(result));
 
-        var record = new DataQualityResult({
+        var now = new Date();
+        var record = {
             patient_record: body,
             overall_score: result.overall_score,
             breakdown: result.breakdown,
-            issues_detected: result.issues_detected || []
-        });
+            issues_detected: result.issues_detected || [],
+            createdAt: now,
+            updatedAt: now
+        };
 
         try {
-            await record.save();
+            DataQualityResult.push(record);
         } catch (saveErr) {
             console.error(
-                '[MongoDB] Failed to persist DataQualityResult.' +
-                ' Code: ' + (saveErr.code || 'N/A') +
+                '[In-Memory Store] Failed to persist DataQualityResult.' +
                 ' Message: ' + saveErr.message
             );
             responsePayload.warning = 'Result could not be persisted to database. Please save this response manually.';

@@ -42,22 +42,24 @@ router.post('/api/reconcile/medication', async function (req, res, next) {
         // response — the client always receives the computed clinical data.
         var responsePayload = JSON.parse(JSON.stringify(result));
 
-        var record = new ReconciliationResult({
+        var now = new Date();
+        var record = {
             patient_context: body.patient_context,
             sources: body.sources,
             reconciled_medication: result.reconciled_medication,
             confidence_score: result.confidence_score,
             reasoning: result.reasoning,
             recommended_actions: result.recommended_actions || [],
-            clinical_safety_check: result.clinical_safety_check
-        });
+            clinical_safety_check: result.clinical_safety_check,
+            createdAt: now,
+            updatedAt: now
+        };
 
         try {
-            await record.save();
+            ReconciliationResult.push(record);
         } catch (saveErr) {
             console.error(
-                '[MongoDB] Failed to persist ReconciliationResult.' +
-                ' Code: ' + (saveErr.code || 'N/A') +
+                '[In-Memory Store] Failed to persist ReconciliationResult.' +
                 ' Message: ' + saveErr.message
             );
             responsePayload.warning = 'Result could not be persisted to database. Please save this response manually.';

@@ -1,6 +1,6 @@
 # EHR — Electronic Health Records API
 
-A Node.js / Express REST API for AI-powered clinical data processing. Provides two endpoints: medication reconciliation across conflicting source records, and patient record data quality assessment. Both use OpenAI GPT-4o for clinical reasoning and persist results to MongoDB.
+A Node.js / Express REST API for AI-powered clinical data processing. Provides two endpoints: medication reconciliation across conflicting source records, and patient record data quality assessment. Both use OpenAI GPT-4o for clinical reasoning and persist results to an in-memory store.
 
 ---
 
@@ -15,7 +15,6 @@ A Node.js / Express REST API for AI-powered clinical data processing. Provides t
 | HTTP error helpers | http-errors | ~1.6.3 |
 | Debug logging | debug | ~2.6.9 |
 | Environment loading | dotenv | ^17.3.1 |
-| Database ODM | mongoose | ^9.2.4 |
 | AI client | openai | ^6.27.0 |
 | Template engine | jade | ~1.11.0 (declared, unused) |
 
@@ -44,8 +43,8 @@ Intern/
     │   ├── reconcileService.js       # Builds prompts for medication reconciliation
     │   └── dataQualityService.js     # Builds prompts for data quality assessment
     └── models/
-        ├── ReconciliationResult.js   # Mongoose model for reconciliation results
-        └── DataQualityResult.js      # Mongoose model for data quality results
+        ├── ReconciliationResult.js   # In-memory array for reconciliation results
+        └── DataQualityResult.js      # In-memory array for data quality results
 ```
 
 ---
@@ -57,13 +56,11 @@ Defined in `Intern/.env`. Loaded at startup by `bin/www` via `dotenv`.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `OPENAI_API_KEY` | **Yes** | — | OpenAI API key. Server will not start without it. |
-| `MONGO_URI` | No | `mongodb://localhost:27017/ehr` | MongoDB connection string. |
 | `PORT` | No | `3000` | TCP port the HTTP server listens on. |
 
 **Example `.env`:**
 ```
 OPENAI_API_KEY=sk-...your-key-here
-MONGO_URI=mongodb+srv://user:pass@cluster.mongodb.net/ehr
 PORT=3000
 ```
 
@@ -71,28 +68,19 @@ PORT=3000
 
 ---
 
-## MongoDB Setup
+## Storage
 
-The app uses Mongoose to connect to MongoDB. No initialization scripts or manual collection setup is required — Mongoose creates collections automatically on first document insert.
+The app stores generated patient records and AI assessments in standard JavaScript arrays (in-memory).
+Data generated during use does not persist between server restarts.
 
-**Collections created automatically:**
+**Collections generated automatically:**
 
 | Collection | Populated by |
 |---|---|
 | `reconciliationresults` | `POST /api/reconcile/medication` |
 | `dataqualityresults` | `POST /api/validate/data-quality` |
 
-**Connection options applied:**
-
-```js
-mongoose.connect(mongoUri, {
-  serverSelectionTimeoutMS: 5000,  // give up after 5 s if host unreachable
-  socketTimeoutMS: 45000,          // close idle sockets after 45 s
-  family: 4                        // force IPv4 (avoids DNS issues on some hosts)
-});
-```
-
-Connection state is logged via event listeners: `connected`, `error`, `disconnected`.
+No setup is required.
 
 ---
 
@@ -126,7 +114,7 @@ cd EHR
 npm install
 
 # 3. Set environment variables
-# Edit Intern/.env — add your OpenAI API key and MongoDB URI (see Environment Variables above)
+# Edit Intern/.env — add your OpenAI API key (see Environment Variables above)
 ```
 
 ---
@@ -151,10 +139,8 @@ PORT=3001 npm start
 
 **Expected startup output (with valid config):**
 ```
-[MongoDB] Connected to mongodb+srv://...
+[In-Memory Store] Ready
 ```
-
-**If MongoDB is not reachable**, the server still starts. Routes will attempt DB writes and log errors if they fail.
 
 **If `OPENAI_API_KEY` is missing or empty**, the process exits immediately:
 ```
@@ -381,10 +367,10 @@ The rubric lives in the prompt rather than in code so the model has explicit gro
 
 ## Error Handling Overview
 
-### MongoDB unavailable
+### In-Memory Store error
 
-The server starts regardless of MongoDB state. On every request that reaches a DB write, if Mongoose fails:
-- Error is logged: `[MongoDB] Failed to persist <ModelName>. Code: <code> Message: <message>`
+The server initializes the in-memory array store immediately. On every request that reaches a store insert, if it fails:
+- Error is logged: `[In-Memory Store] Failed to persist <ModelName>. Message: <message>`
 - The AI result is still returned to the client
 - A `warning` field is added to the response body
 
