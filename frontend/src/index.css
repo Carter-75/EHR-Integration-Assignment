@@ -1,0 +1,128 @@
+:root {
+  --primary-color: #2b6cb0;
+  --primary-hover: #2c5282;
+  --success-color: #38a169;
+  --success-bg: #f0fff4;
+  --warning-color: #d69e2e;
+  --warning-bg: #fffff0;
+  --danger-color: #e53e3e;
+  --danger-bg: #fff5f5;
+  --text-main: #2d3748;
+  --text-muted: #718096;
+  --bg-main: #f7fafc;
+  --bg-surface: #ffffff;
+  --border-color: #e2e8f0;
+  --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  --radius-md: 6px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-family);
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+h1, h2, h3, h4, p {
+  margin: 0;
+  margin-bottom: 0.5rem;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+/* Base Form Elements */
+input, select, textarea, button {
+  font-family: inherit;
+  font-size: 1rem;
+}
+
+input, select, textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  margin-bottom: 1rem;
+}
+
+button {
+  cursor: pointer;
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.btn-primary:hover {
+  background-color: var(--primary-hover);
+}
+
+.btn-success { background: var(--success-color); color: white; }
+.btn-danger { background: var(--danger-color); color: white; }
+.btn-outline { background: transparent; border: 1px solid var(--border-color); color: var(--text-main); }
+.btn-outline:hover { background: var(--bg-main); }
+
+.card {
+  background: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+/* Utilities */
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.gap-4 { gap: 1rem; }
+.gap-2 { gap: 0.5rem; }
+.mt-4 { margin-top: 1rem; }
+.mb-4 { margin-bottom: 1rem; }
+.mb-2 { margin-bottom: 0.5rem; }
+
+/* Status Colors */
+.text-red { color: var(--danger-color); }
+.text-yellow { color: var(--warning-color); }
+.text-green { color: var(--success-color); }
+.text-gray { color: var(--text-muted); }
+
+.bg-red { background-color: var(--danger-color); color: white; }
+.bg-yellow { background-color: var(--warning-color); color: white; }
+.bg-green { background-color: var(--success-color); color: white; }
+.bg-gray { background-color: var(--text-muted); color: white; }
+
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.error-text {
+  color: var(--danger-color);
+  font-size: 0.875rem;
+  margin-top: -0.75rem;
+  margin-bottom: 1rem;
+  display: block;
+}

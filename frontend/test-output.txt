@@ -1,0 +1,74 @@
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90mC:/Users/carte/OneDrive/Desktop/Code/Intern/frontend[39m
+
+ [31m❯[39m src/utils/__tests__/logic.test.js [2m([22m[2m0 test[22m[2m)[22m
+ [31m❯[39m src/pages/__tests__/DataQuality.test.jsx [2m([22m[2m0 test[22m[2m)[22m
+ [31m❯[39m src/pages/__tests__/MedicationReconciliation.test.jsx [2m([22m[2m0 test[22m[2m)[22m
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Suites 3 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m src/utils/__tests__/logic.test.js[2m [ src/utils/__tests__/logic.test.js ][22m
+[31m[1mError[22m: Failed to resolve import "./thresholds" from "src/utils/__tests__/logic.test.js". Does the file exist?[39m
+  Plugin: [35mvite:import-analysis[39m
+  File: [36mC:/Users/carte/OneDrive/Desktop/Code/Intern/frontend/src/utils/__tests__/logic.test.js[39m:2:60
+[33m  1  |  import { describe, it, expect } from 'vitest';
+  2  |  import { getDataQualityColor, getSeverityBadgeColor } from './thresholds';
+     |                                                              ^
+  3  |  import { calibrateConfidenceScore } from './calibration';
+  4  |  import { detectDuplicates } from './duplicateDetection';[39m
+[90m [2m❯[22m TransformPluginContext._formatLog node_modules/vite/dist/node/chunks/config.js:[2m28999:43[22m[39m
+[90m [2m❯[22m TransformPluginContext.error node_modules/vite/dist/node/chunks/config.js:[2m28996:14[22m[39m
+[90m [2m❯[22m normalizeUrl node_modules/vite/dist/node/chunks/config.js:[2m27119:18[22m[39m
+[90m [2m❯[22m node_modules/vite/dist/node/chunks/config.js:[2m27177:32[22m[39m
+[90m [2m❯[22m TransformPluginContext.transform node_modules/vite/dist/node/chunks/config.js:[2m27145:4[22m[39m
+[90m [2m❯[22m EnvironmentPluginContainer.transform node_modules/vite/dist/node/chunks/config.js:[2m28797:14[22m[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/config.js:[2m22670:26[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m src/pages/__tests__/DataQuality.test.jsx[2m [ src/pages/__tests__/DataQuality.test.jsx ][22m
+[31m[1mError[22m: Failed to resolve import "../pages/DataQuality" from "src/pages/__tests__/DataQuality.test.jsx". Does the file exist?[39m
+  Plugin: [35mvite:import-analysis[39m
+  File: [36mC:/Users/carte/OneDrive/Desktop/Code/Intern/frontend/src/pages/__tests__/DataQuality.test.jsx[39m:3:24
+[33m  2  |  import { describe, it, expect } from "vitest";
+  3  |  import { render, screen, fireEvent } from "@testing-library/react";
+  4  |  import DataQuality from "../pages/DataQuality";
+     |                           ^
+  5  |  describe("DataQuality Form Validation", () => {
+  6  |    it("shows error messages when required fields are empty", () => {[39m
+[90m [2m❯[22m TransformPluginContext._formatLog node_modules/vite/dist/node/chunks/config.js:[2m28999:43[22m[39m
+[90m [2m❯[22m TransformPluginContext.error node_modules/vite/dist/node/chunks/config.js:[2m28996:14[22m[39m
+[90m [2m❯[22m normalizeUrl node_modules/vite/dist/node/chunks/config.js:[2m27119:18[22m[39m
+[90m [2m❯[22m node_modules/vite/dist/node/chunks/config.js:[2m27177:32[22m[39m
+[90m [2m❯[22m TransformPluginContext.transform node_modules/vite/dist/node/chunks/config.js:[2m27145:4[22m[39m
+[90m [2m❯[22m EnvironmentPluginContainer.transform node_modules/vite/dist/node/chunks/config.js:[2m28797:14[22m[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/config.js:[2m22670:26[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m src/pages/__tests__/MedicationReconciliation.test.jsx[2m [ src/pages/__tests__/MedicationReconciliation.test.jsx ][22m
+[31m[1mError[22m: Failed to resolve import "../pages/MedicationReconciliation" from "src/pages/__tests__/MedicationReconciliation.test.jsx". Does the file exist?[39m
+  Plugin: [35mvite:import-analysis[39m
+  File: [36mC:/Users/carte/OneDrive/Desktop/Code/Intern/frontend/src/pages/__tests__/MedicationReconciliation.test.jsx[39m:3:37
+[33m  2  |  import { describe, it, expect } from "vitest";
+  3  |  import { render, screen, fireEvent } from "@testing-library/react";
+  4  |  import MedicationReconciliation from "../pages/MedicationReconciliation";
+     |                                        ^
+  5  |  describe("MedicationReconciliation Form Validation", () => {
+  6  |    it("shows error message if patient context is empty", () => {[39m
+[90m [2m❯[22m TransformPluginContext._formatLog node_modules/vite/dist/node/chunks/config.js:[2m28999:43[22m[39m
+[90m [2m❯[22m TransformPluginContext.error node_modules/vite/dist/node/chunks/config.js:[2m28996:14[22m[39m
+[90m [2m❯[22m normalizeUrl node_modules/vite/dist/node/chunks/config.js:[2m27119:18[22m[39m
+[90m [2m❯[22m node_modules/vite/dist/node/chunks/config.js:[2m27177:32[22m[39m
+[90m [2m❯[22m TransformPluginContext.transform node_modules/vite/dist/node/chunks/config.js:[2m27145:4[22m[39m
+[90m [2m❯[22m EnvironmentPluginContainer.transform node_modules/vite/dist/node/chunks/config.js:[2m28797:14[22m[39m
+[90m [2m❯[22m loadAndTransform node_modules/vite/dist/node/chunks/config.js:[2m22670:26[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m3 failed[39m[22m[90m (3)[39m
+[2m      Tests [22m [2mno tests[22m
+[2m   Start at [22m 19:32:06
+[2m   Duration [22m 1.58s[2m (transform 0ms, setup 0ms, import 0ms, tests 0ms, environment 3.37s)[22m
+
