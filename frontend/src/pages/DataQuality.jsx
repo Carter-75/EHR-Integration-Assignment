@@ -22,13 +22,13 @@ export default function DataQuality() {
 
   const validate = () => {
     const errs = {};
-    if (!formData.name.trim()) errs.name = "Name is required.";
-    if (!formData.dob.trim()) errs.dob = "DOB is required.";
-    if (!formData.gender.trim()) errs.gender = "Gender is required.";
+    if (!formData.name.trim()) errs.name = 'Name is required.';
+    if (!formData.dob.trim()) errs.dob = 'DOB is required.';
+    if (!formData.gender.trim()) errs.gender = 'Gender is required.';
     
     // Check Date format roughly
-    if (formData.dob && isNaN(Date.parse(formData.dob))) errs.dob = "Invalid Date Format (YYYY-MM-DD expected).";
-    if (formData.last_updated && isNaN(Date.parse(formData.last_updated))) errs.last_updated = "Invalid Date Format.";
+    if (formData.dob && isNaN(Date.parse(formData.dob))) errs.dob = 'Invalid Date Format (YYYY-MM-DD expected).';
+    if (formData.last_updated && isNaN(Date.parse(formData.last_updated))) errs.last_updated = 'Invalid Date Format.';
 
     setValidationErrors(errs);
     return Object.keys(errs).length === 0;

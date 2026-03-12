@@ -11,12 +11,10 @@ A Node.js / Express REST API for AI-powered clinical data processing. Provides t
 | Runtime | Node.js | ≥ 18 recommended |
 | Web framework | express | ~4.16.1 |
 | HTTP logging | morgan | ~1.9.1 |
-| Cookie parsing | cookie-parser | ~1.4.4 |
 | HTTP error helpers | http-errors | ~1.6.3 |
 | Debug logging | debug | ~2.6.9 |
 | Environment loading | dotenv | ^17.3.1 |
 | AI client | openai | ^6.27.0 |
-| Template engine | jade | ~1.11.0 (declared, unused) |
 
 ---
 
@@ -26,25 +24,31 @@ A Node.js / Express REST API for AI-powered clinical data processing. Provides t
 Intern/
 ├── .env                              # Environment variables (not committed)
 ├── README.md
+├── docker-compose.yml                # Docker orchestrator
+├── Dockerfile.backend                # Backend docker image definition
+├── Dockerfile.frontend               # Frontend docker image definition
+├── frontend/                         # React SPA
+│   ├── src/
+│   │   ├── components/               # Reusable UI widgets
+│   │   ├── pages/                    # Main views (DataQuality, MedicationReconciliation)
+│   │   ├── services/                 # External API integrations
+│   │   └── utils/                    # Shared validation and logic
+│   └── package.json                  # Frontend dependencies
 └── EHR/                              # Application root
-    ├── package.json
-    ├── app.js                        # Express app: middleware, route registration, error handler
-    ├── bin/
-    │   └── www                       # Server entry point: env validation, DB connection, HTTP listen
-    ├── public/
-    │   └── index.html                # Static HTML shell served at GET /
-    ├── routes/
-    │   ├── index.js                  # GET / — serves public/index.html
-    │   ├── users.js                  # GET /users — placeholder stub
-    │   ├── medication.js             # POST /api/reconcile/medication
-    │   └── data.js                   # POST /api/validate/data-quality
-    ├── services/
-    │   ├── openaiService.js          # OpenAI client, retry logic, JSON validation, schema validators
-    │   ├── reconcileService.js       # Builds prompts for medication reconciliation
-    │   └── dataQualityService.js     # Builds prompts for data quality assessment
-    └── models/
-        ├── ReconciliationResult.js   # In-memory array for reconciliation results
-        └── DataQualityResult.js      # In-memory array for data quality results
+    ├── package.json                  # Backend dependencies
+    └── src/                          # Backend source code
+        ├── app.js                    # Express app: middleware, route registration, error handler
+        ├── server.js                 # Server entry point: env validation, HTTP listen
+        ├── routes/
+        │   ├── medication.js         # POST /api/reconcile/medication
+        │   └── data.js               # POST /api/validate/data-quality
+        ├── services/
+        │   ├── openaiService.js      # OpenAI client, schema validators
+        │   ├── reconcileService.js   # Builds prompts for medication reconciliation
+        │   └── dataQualityService.js # Builds prompts for data quality assessment
+        └── models/
+            ├── ReconciliationResult.js   # In-memory array for reconciliation results
+            └── DataQualityResult.js      # In-memory array for data quality results
 ```
 
 ---
@@ -155,7 +159,7 @@ Defined in `EHR/package.json`:
 
 | Script | Command |
 |---|---|
-| `npm start` | `node ./bin/www` |
+| `npm start` | `node ./src/server.js` |
 
 No `dev`, `test`, or `seed` scripts exist.
 
@@ -170,18 +174,6 @@ All routes return `Content-Type: application/json`. All error responses use the 
 ```
 
 In `development` mode (`NODE_ENV=development`), `error` contains the full error object.
-
----
-
-### `GET /`
-
-Serves `public/index.html`.
-
----
-
-### `GET /users`
-
-Placeholder stub. Returns the plain-text string `respond with a resource`.
 
 ---
 
@@ -420,8 +412,59 @@ None. No caching layer is implemented. Every request triggers a fresh OpenAI API
 
 ## Known Limitations
 
-- `/users` route is a stub — returns a plain-text placeholder string.
-- `jade` is declared as a dependency but is unused. It can be removed safely.
-- No authentication or authorization on any route.
-- No test runner or test files.
-- `public/index.html` is a bare scaffold (`<h1>EHR App</h1>` only).
+- No authentication or authorization on any backend route (frontend strictly gates with localStorage UI keys).
+- Backend contains no test runner or test files (frontend logic is fully tested via Vitest).
+
+---
+
+## Frontend Dashboard
+
+A modern, responsive React dashboard has been added to provide a clinician-friendly interface for the API.
+
+### Features
+- **Medication Reconciliation View**: Reconciles conflicting medication records, provides a confidence score gauge, clinical reasoning, safety checks, and duplicate record detection.
+- **Data Quality View**: Visualizes data quality scores with severity badges and color-coded thresholds.
+- **Webhook Configuration**: Register a URL to receive real-time webhook POSTs when an AI result is approved or rejected by a clinician.
+- **Authentication**: All API calls are protected purely on the client side. The user must provide their API key in the UI, which is securely stored in `localStorage` and sent with requests.
+
+### Running Locally
+1. Navigate to the `frontend` directory: `cd frontend`
+2. Install dependencies: `npm install --legacy-peer-deps`
+3. Run the development server: `npm run dev`
+4. Open `http://localhost:5173` in your browser.
+5. In the UI, you will be prompted to enter your API key.
+
+### Running Unit Tests
+The project features a comprehensive test suite orchestrating both frontend unit tests and backend service tests using Vitest from within the `frontend/` directory.
+
+**Test Coverage:**
+- **`frontend/src/utils/calibration.test.js`**: Calculates confidence score bounds and factor weightings (recency, agreement, reliability).
+- **`frontend/src/utils/duplicateDetection.test.js`**: Warns the clinical interface about identical drugs and overlapping doses.
+- **`frontend/src/utils/thresholds.test.js`** / **`frontend/src/pages/Validation.test.jsx`**: Validates form handling, conditional rendering, and dynamic threshold status boundaries (pass, warn, red).
+- **`frontend/src/__backend_tests__/reconcileService.test.js`**: Native Node tests evaluating the AI interface logic. Asserts correct behavior on empty sources, missing fields, and exact JSON schema conformance (using dynamic API mocking).
+- **`frontend/src/__backend_tests__/dataQualityService.test.js`**: Native Node tests evaluating the data assessment logic. Evaluates missing demographic arrays, timeliness stale rules, and payload construction.
+
+**Command:**
+1. `cd frontend`
+2. Run tests via Vitest: `npx vitest run`
+
+### Docker & docker-compose
+The entire stack can be brought up using Docker Compose.
+1. Ensure Docker is running.
+2. From the root `Intern` folder run: `docker-compose up --build`
+3. The backend will be available on port 3000, and the frontend on port 4173.
+
+*(Note: Provide your `OPENAI_API_KEY` in the `Intern/.env` file for the backend to function).*
+
+### Vercel Deployment
+The frontend is configured for zero-config Vercel deployment via `vercel.json`.
+1. Push the repository to GitHub/GitLab.
+2. Import the `frontend` folder into a new Vercel Project.
+3. In Vercel Project Settings > Environment Variables, set `VITE_API_URL` to point to your deployed backend URL.
+4. Deploy!
+
+### Configuring Webhooks
+1. Open the frontend dashboard and navigate to the **Webhook Config** tab.
+2. Enter your endpoint URL (e.g., `https://your-service.com/webhook`).
+3. Click **Save Configuration**.
+4. When you Approve or Reject a Medication Reconciliation result, a POST request bearing the payload and decision will be dispatched to your webhook URL.

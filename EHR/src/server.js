@@ -13,7 +13,7 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.trim() === '') {
  * Module dependencies.
  */
 
-var app = require('../app');
+var app = require('./app');
 var debug = require('debug')('ehr:server');
 var http = require('http');
 
