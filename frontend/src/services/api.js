@@ -9,7 +9,7 @@ class ApiError extends Error {
 }
 
 async function fetchWithAuth(endpoint, options = {}) {
-  const apiKey = localStorage.getItem('ehr_api_key');
+  const apiKey = import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('ehr_api_key');
   
   if (!apiKey) {
     throw new Error('API key is missing. Please configure it in settings.');
@@ -46,6 +46,10 @@ async function fetchWithAuth(endpoint, options = {}) {
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      window.dispatchEvent(new Event('ehr_api_unauthorized'));
+    }
+
     let errorPayload = {};
     try {
       errorPayload = await response.json();

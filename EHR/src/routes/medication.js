@@ -16,6 +16,12 @@ var openaiService = require('../services/openaiService');
  */
 router.post('/api/reconcile/medication', async function (req, res, next) {
     var body = req.body;
+    
+    var apiKey = '';
+    var authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        apiKey = authHeader.substring(7);
+    }
 
     if (!body || typeof body !== 'object') {
         return res.status(400).json({ message: 'Request body must be a JSON object.', error: {} });
@@ -28,7 +34,7 @@ router.post('/api/reconcile/medication', async function (req, res, next) {
     }
 
     try {
-        var result = await reconcileService.reconcileMedications(body);
+        var result = await reconcileService.reconcileMedications(body, apiKey);
 
         var schemaError = openaiService.validateReconciliationResult(result);
         if (schemaError) {

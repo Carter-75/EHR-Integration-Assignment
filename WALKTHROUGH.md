@@ -54,8 +54,8 @@ Let's trace a Medication Reconciliation request.
 
 1.  **User Action:** A clinician enters patient details into the `MedicationReconciliation.jsx` component and clicks "Run Reconciliation".
 2.  **Duplicate Check:** Before sending, `detectDuplicates` (in `duplicateDetection.js`) checks if there are clearly identical drugs. If yes, it shows a warning. If the user clicks "Submit Anyway", it proceeds.
-3.  **Frontend API Call:** The `api.reconcileMedication` function (in `api.js`) is called. It retrieves the OpenAI API key from Local Storage and attaches it as an `Authorization` header, formatting the patient data into a JSON (JavaScript Object Notation) payload, and sending it via a `POST` network request to the backend.
-4.  **Backend Route Handling:** The Express server receives the request at `medication.js` (`POST /api/reconcile/medication`). The route handler verifies the body has `sources` and `patient_context`. 
+3.  **Frontend API Call:** The `api.reconcileMedication` function (in `api.js`) is called. It retrieves the OpenAI API key, prioritizing `VITE_OPENAI_API_KEY` first, then falling back to `localStorage`. It attaches it to an `Authorization` Bearer header, formats the patient data into a JSON (JavaScript Object Notation) payload, and sends it via a `POST` network request to the backend.
+4.  **Backend Route Handling:** The Express server receives the request at `medication.js` (`POST /api/reconcile/medication`). The route handler verifies the body has `sources` and `patient_context`, extracts the API key from the incoming `Authorization` header, and passes it downward.
 5.  **Service Layer & AI:** The route calls `reconcileService.reconcileMedications`. This service converts the JSON input into a literal string of text (the user prompt) describing the medications. It pairs this with a system prompt (instructions on how to be a clinical pharmacist) and calls `openaiService.callOpenAI`.
 6.  **AI Invocation:** `openaiService` sends the prompts to OpenAI, requesting a JSON object in return. If it hits an error or rate limit, it automatically waits and tries again (exponential backoff).
 7.  **Data Validation:** Once the AI responds, `openaiService.validateReconciliationResult` ensures every required field (like `confidence_score` and `reasoning`) is present. If it fails, the server asks OpenAI again or throws an error (HTTP 502 Bad Gateway).
@@ -140,6 +140,7 @@ It defines the middleware (code that runs between receiving a request and sendin
 
 **How it does it**
 *   `express()` initializes the application object.
+*   `app.use(cors())` applies Cross-Origin Resource Sharing middleware, ensuring the browser doesn't block frontend requests trying to reach the differently-ported backend API.
 *   `app.use(logger('dev'))` enables a request logger (Morgan) so that every network call prints cleanly in the terminal.
 *   `app.use(express.json())` configures the app to automatically translate raw incoming HTTP body strings into useable JavaScript Objects.
 *   `app.use('/', indexRouter)`, `app.use('/', medicationRouter)`, and `app.use('/', dataRouter)` inform the app that any request starting with `/` should be checked against the routes defined in those files.
@@ -452,7 +453,8 @@ It creates the sticky header bar (the title and navigation links) and keeps trac
 
 **How it does it**
 *   `const [hasKey, setHasKey] = useState(false)` creates a memory slot called state. The whole screen re-draws automatically whenever `setHasKey` is called.
-*   `useEffect` runs exactly once when the page loads. It checks `localStorage` (the browser's long-term memory) to see if you saved an api key yesterday.
+*   `useEffect` runs exactly once when the page loads. It checks `import.meta.env.VITE_OPENAI_API_KEY` followed by `localStorage` (the browser's long-term memory) to see if you mapped a key dynamically or saved one yesterday. If neither exists, it flips `showPrompt` to true.
+*   A custom event listener (`window.addEventListener('ehr_api_unauthorized')`) listens for downstream network failures. If an API call fails with a 401 Unauthorized because the key is broken or expired, this listener forcefully deletes the key from `localStorage` and pops the `ApiKeyPrompt` back open automatically.
 *   `const navItemStyle` is a function that changes the border color of the tabs depending on if `currentTab === tabId`, creating the visual illusion of clicking folders.
 *   It uses conditional rendering (`{currentTab === 'reconcile' && <MedicationReconciliation />}`) to instantly swap out what component is drawing the center of the screen without loading a new webpage.
 
@@ -473,7 +475,8 @@ The central dispatcher for all external network requests leaving the browser.
 It packages the clinician's raw typed data into proper HTTP format, grabs the secret API key from the browser's storage, and physically fires the network shot at our Express Backend. If it breaks, it catches the error and throws an `ApiError`.
 
 **How it does it**
-*   `fetchWithAuth(endpoint, options)` is a custom wrapper around the standard browser `fetch` tool. It intercepts the request to inject `'Authorization': Bearer ${apiKey}` before the packet leaves your laptop.
+*   `fetchWithAuth(endpoint, options)` is a custom wrapper around the standard browser `fetch` tool. It intercepts the request to dynamically compute the API key (`import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('ehr_api_key')`) and injects `'Authorization': Bearer ${apiKey}` before the packet leaves your laptop.
+*   If the backend returns an HTTP 401 status, it immediately dispatches an `ehr_api_unauthorized` window event before throwing an error, prompting the application state to kick the user back to the configuration modal.
 *   `if (!response.ok)` catches 4XX or 5XX status codes and attempts to parse the payload safely so the screen can display "Rate Limited" instead of instantly crashing. 
 *   `export const api` bundles two ready-to-use asynchronous actions: `reconcileMedication` and `validateDataQuality`.
 
@@ -629,6 +632,7 @@ They allow the application to accept setup secrets (API keys and URL paths) and 
 **How they do it**
 *   They rely exclusively on standard browser functions like `localStorage.setItem('key', value)` and `localStorage.getItem('key')`. 
 *   `ApiKeyPrompt.jsx` uses absolute positioning CSS styles (`z-index: 1000`) to completely hijack the user screen with a darkened translucent background, physically preventing you from clicking the app behind it until it secures a valid key.
+*   If a user is actively attempting to *update* an already valid key from the header bar, `ApiKeyPrompt.jsx` renders a secondary 'Cancel' button that closes the modal without irreversibly wiping the existing working `localStorage` key.
 
 **How they connect**
 Imported by `App.jsx`, which strictly halts app propagation via an `if/else` block based on their inputs.

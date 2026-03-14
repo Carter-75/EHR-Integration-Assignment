@@ -113,11 +113,12 @@ function buildUserPrompt(body) {
 
 /**
  * @param {Object} body  Validated request body (patient record fields)
+ * @param {string} [apiKey]
  * @returns {Promise<Object>}
  */
-async function assessDataQuality(body) {
+async function assessDataQuality(body, apiKey) {
     var userPrompt = buildUserPrompt(body);
-    return openaiService.callOpenAI(SYSTEM_PROMPT, userPrompt);
+    return openaiService.callOpenAI(SYSTEM_PROMPT, userPrompt, apiKey);
 }
 
 module.exports = { assessDataQuality: assessDataQuality };

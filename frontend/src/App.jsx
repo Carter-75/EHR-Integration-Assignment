@@ -6,16 +6,44 @@ import WebhookConfig from './pages/WebhookConfig';
 
 function App() {
   const [hasKey, setHasKey] = useState(false);
+  const [showPrompt, setShowPrompt] = useState(false);
   const [currentTab, setCurrentTab] = useState('reconcile');
 
   useEffect(() => {
-    if (localStorage.getItem('ehr_api_key')) {
-      setHasKey(true);
-    }
+    const checkKey = () => {
+      if (import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('ehr_api_key')) {
+        setHasKey(true);
+      } else {
+        setShowPrompt(true);
+      }
+    };
+
+    checkKey();
+
+    const handleUnauthorized = () => {
+      localStorage.removeItem('ehr_api_key');
+      setHasKey(false);
+      setShowPrompt(true);
+    };
+
+    window.addEventListener('ehr_api_unauthorized', handleUnauthorized);
+
+    return () => {
+      window.removeEventListener('ehr_api_unauthorized', handleUnauthorized);
+    };
   }, []);
 
   const handleKeySave = () => {
     setHasKey(true);
+    setShowPrompt(false);
+  };
+
+  const handleResetRequest = () => {
+    setShowPrompt(true);
+  };
+
+  const handleCancelPrompt = () => {
+    setShowPrompt(false);
   };
 
   const navItemStyle = (tabId) => ({
@@ -33,7 +61,13 @@ function App() {
 
   return (
     <>
-      {!hasKey && <ApiKeyPrompt onKeySave={handleKeySave} />}
+      {showPrompt && (
+        <ApiKeyPrompt 
+          onKeySave={handleKeySave} 
+          onCancel={handleCancelPrompt} 
+          showCancel={hasKey} // Only show cancel if they already have a working key
+        />
+      )}
       
       <header style={{ background: 'white', borderBottom: '1px solid var(--border-color)', top: 0, position: 'sticky', zIndex: 10 }}>
         <div className="container" style={{ padding: '0 2rem' }}>
@@ -42,8 +76,8 @@ function App() {
             <nav className="flex">
               <button style={navItemStyle('reconcile')} onClick={() => setCurrentTab('reconcile')}>Medication Reconciliation</button>
               <button style={navItemStyle('data')} onClick={() => setCurrentTab('data')}>Data Quality</button>
-              <button style={navItemStyle('webhook')} onClick={() => setCurrentTab('webhook')}>Webhook Config</button>
-              <button style={navItemStyle('logout')} onClick={() => { localStorage.removeItem('ehr_api_key'); setHasKey(false); }}>Reset API Key</button>
+              <button style={{...navItemStyle('webhook'), marginRight: 'auto'}} onClick={() => setCurrentTab('webhook')}>Webhook Config</button>
+              <button style={navItemStyle('reset')} onClick={handleResetRequest}>Update API Key</button>
             </nav>
           </div>
         </div>

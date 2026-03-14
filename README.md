@@ -10,6 +10,7 @@ A Node.js / Express REST API for AI-powered clinical data processing. Provides t
 |---|---|---|
 | Runtime | Node.js | ≥ 18 recommended |
 | Web framework | express | ~4.16.1 |
+| CORS | cors | ^2.8.5 |
 | HTTP logging | morgan | ~1.9.1 |
 | HTTP error helpers | http-errors | ~1.6.3 |
 | Debug logging | debug | ~2.6.9 |
@@ -425,7 +426,11 @@ A modern, responsive React dashboard has been added to provide a clinician-frien
 - **Medication Reconciliation View**: Reconciles conflicting medication records, provides a confidence score gauge, clinical reasoning, safety checks, and duplicate record detection.
 - **Data Quality View**: Visualizes data quality scores with severity badges and color-coded thresholds.
 - **Webhook Configuration**: Register a URL to receive real-time webhook POSTs when an AI result is approved or rejected by a clinician.
-- **Authentication**: All API calls are protected purely on the client side. The user must provide their API key in the UI, which is securely stored in `localStorage` and sent with requests.
+- **Authentication**: All API calls are protected purely on the client side. The application secures an OpenAI API key in the following priority:
+  1. Environment variable (`VITE_OPENAI_API_KEY`) for zero-prompt Vercel deployments.
+  2. `localStorage` for returning users (persists across sessions and page refreshes).
+  3. A blocking `ApiKeyPrompt` UI modal if neither exists.
+  *Note: If a key is rejected by the backend (HTTP 401), the app automatically clears it from `localStorage` and re-shows the prompt.*
 
 ### Running Locally
 1. Navigate to the `frontend` directory: `cd frontend`
@@ -457,11 +462,14 @@ The entire stack can be brought up using Docker Compose.
 *(Note: Provide your `OPENAI_API_KEY` in the `Intern/.env` file for the backend to function).*
 
 ### Vercel Deployment
-The frontend is configured for zero-config Vercel deployment via `vercel.json`.
+The entire monorepo is configured for zero-config Vercel deployment via `vercel.json` which maps frontend requests to the Vite `dist` folder and `/api` requests to the Express Serverless Functions.
 1. Push the repository to GitHub/GitLab.
-2. Import the `frontend` folder into a new Vercel Project.
-3. In Vercel Project Settings > Environment Variables, set `VITE_API_URL` to point to your deployed backend URL.
-4. Deploy!
+2. Import the root `Intern` folder into a new Vercel Project.
+3. In Vercel Project Settings > General, set the **Framework Preset** to **Vite**.
+4. In Vercel Project Settings > Environment Variables, add two variables:
+   - `VITE_OPENAI_API_KEY`: Set to your real OpenAI key (used securely by the frontend Serverless endpoints).
+   - `OPENAI_API_KEY`: Set to a dummy value (e.g. `sk-dummy`) just so the backend `server.js` doesn't crash on boot check.
+5. Deploy!
 
 ### Configuring Webhooks
 1. Open the frontend dashboard and navigate to the **Webhook Config** tab.

@@ -16,6 +16,12 @@ var openaiService = require('../services/openaiService');
  */
 router.post('/api/validate/data-quality', async function (req, res, next) {
     var body = req.body;
+    
+    var apiKey = '';
+    var authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        apiKey = authHeader.substring(7);
+    }
 
     if (!body || typeof body !== 'object') {
         return res.status(400).json({ message: 'Request body must be a JSON object.', error: {} });
@@ -25,7 +31,7 @@ router.post('/api/validate/data-quality', async function (req, res, next) {
     }
 
     try {
-        var result = await dataQualityService.assessDataQuality(body);
+        var result = await dataQualityService.assessDataQuality(body, apiKey);
 
         var schemaError = openaiService.validateDataQualityResult(result);
         if (schemaError) {

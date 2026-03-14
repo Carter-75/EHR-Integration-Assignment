@@ -2,12 +2,8 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../../.env') });
 
-// Server refuses to start without the OpenAI key — every AI route would fail
-// on the first request and the error would only surface then, not at boot.
-if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY.trim() === '') {
-  console.error('[FATAL] OPENAI_API_KEY is not set or is empty. Set it in Intern/.env and restart.');
-  process.exit(1);
-}
+// Server used to refuse to start without the OpenAI key,
+// but now it relies entirely on the client providing it via the Authorization header.
 
 /**
  * Module dependencies.

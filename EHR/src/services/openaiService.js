@@ -7,12 +7,20 @@ var OpenAI = require('openai');
 // the module safe to require in test contexts where the server isn't booting.
 var _client = null;
 
-function getClient() {
+function getClient(apiKey) {
+    var keyToUse = apiKey || process.env.OPENAI_API_KEY;
+    if (!keyToUse) {
+        throw new Error('OpenAI API key was not provided in the request Authorization header.');
+    }
+    
+    // Always create a new client if an explicit key is passed, 
+    // otherwise reuse the singleton created from env var
+    if (apiKey) {
+        return new OpenAI({ apiKey: apiKey });
+    }
+    
     if (!_client) {
-        if (!process.env.OPENAI_API_KEY) {
-            throw new Error('OPENAI_API_KEY environment variable is not set.');
-        }
-        _client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        _client = new OpenAI({ apiKey: keyToUse });
     }
     return _client;
 }
@@ -29,10 +37,11 @@ function sleep(ms) {
  *
  * @param {string} systemPrompt
  * @param {string} userPrompt
+ * @param {string} [apiKey]
  * @returns {Promise<string>} Raw response content string
  */
-async function attemptCall(systemPrompt, userPrompt) {
-    var client = getClient();
+async function attemptCall(systemPrompt, userPrompt, apiKey) {
+    var client = getClient(apiKey);
 
     var response = await client.chat.completions.create({
         model: 'gpt-4o',
@@ -56,16 +65,17 @@ async function attemptCall(systemPrompt, userPrompt) {
  *
  * @param {string} systemPrompt
  * @param {string} userPrompt
+ * @param {string} [apiKey]
  * @returns {Promise<Object>}
  */
-async function callOpenAI(systemPrompt, userPrompt) {
+async function callOpenAI(systemPrompt, userPrompt, apiKey) {
     var maxRetries = 3;
     var attempt = 0;
     var raw;
 
     while (attempt <= maxRetries) {
         try {
-            raw = await attemptCall(systemPrompt, userPrompt);
+            raw = await attemptCall(systemPrompt, userPrompt, apiKey);
             break;
         } catch (err) {
             var status = err.status || (err.response && err.response.status);
@@ -92,7 +102,7 @@ async function callOpenAI(systemPrompt, userPrompt) {
         console.warn('[OpenAI] Response was not valid JSON. Retrying once...');
 
         try {
-            raw = await attemptCall(systemPrompt, userPrompt);
+            raw = await attemptCall(systemPrompt, userPrompt, apiKey);
         } catch (retryCallErr) {
             var retryCallError = new Error('OpenAI API call failed on JSON-retry attempt: ' + (retryCallErr.message || 'Unknown error'));
             retryCallError.status = retryCallErr.status || 502;

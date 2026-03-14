@@ -78,11 +78,12 @@ function buildUserPrompt(body) {
 
 /**
  * @param {Object} body  Validated request body { patient_context, sources }
+ * @param {string} [apiKey]
  * @returns {Promise<Object>}
  */
-async function reconcileMedications(body) {
+async function reconcileMedications(body, apiKey) {
     var userPrompt = buildUserPrompt(body);
-    return openaiService.callOpenAI(SYSTEM_PROMPT, userPrompt);
+    return openaiService.callOpenAI(SYSTEM_PROMPT, userPrompt, apiKey);
 }
 
 module.exports = { reconcileMedications: reconcileMedications };

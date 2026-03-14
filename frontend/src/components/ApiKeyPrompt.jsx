@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export default function ApiKeyPrompt({ onKeySave }) {
+export default function ApiKeyPrompt({ onKeySave, onCancel, showCancel = false }) {
   const [apiKey, setApiKey] = useState('');
 
   const handleSubmit = (e) => {
@@ -29,9 +29,21 @@ export default function ApiKeyPrompt({ onKeySave }) {
             onChange={e => setApiKey(e.target.value)}
             required
           />
-          <button type="submit" className="btn-primary" style={{ width: '100%' }}>
-            Save Key & Continue
-          </button>
+          <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
+            {showCancel && (
+              <button 
+                type="button" 
+                className="btn-secondary" 
+                style={{ width: '100%', background: 'transparent', border: '1px solid var(--border-color)', color: 'var(--text-color)' }}
+                onClick={onCancel}
+              >
+                Cancel
+              </button>
+            )}
+            <button type="submit" className="btn-primary" style={{ width: '100%' }}>
+              Save Key & Continue
+            </button>
+          </div>
         </form>
       </div>
     </div>
