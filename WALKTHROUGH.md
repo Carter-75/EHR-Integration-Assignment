@@ -1,675 +1,735 @@
-# Project Walkthrough: EHR Clinic Dashboard & API
+# Project Walkthrough: EHR Clinic Dashboard & API (Deep Technical Guide)
 
-## High-Level Overview
+Companion guide:
+- If you want the fast, high-level version, read `SIMPLE_WALKTHROUGH.md`.
+- If you want detailed internals, API flow, and file-by-file behavior, use this file.
 
-**What this project does**
-This project is an Electronic Health Records (EHR) web application and Application Programming Interface (API) designed to help clinicians make data-driven decisions. It takes patient medical data that is often messy or conflicting (like having two different hospital records for the same patient) and uses Artificial Intelligence (AI) to clean it up. Specifically, it can look at a list of medications from different doctors, intelligently figure out the real current dosage, and also grade a patient's medical file to see how complete and accurate it is.
+## 1. Executive Summary
 
-**The Technology Stack**
-*   **React (Frontend Framework):** A JavaScript library for building User Interfaces (UIs). It exists to create the interactive dashboard where doctors plug in data and see results instantly without reloading the page.
-*   **Vite (Frontend Tooling):** A build tool that compiles the React code extremely fast and serves it locally during development.
-*   **Node.js & Express (Backend):** Node.js is a runtime that lets us run JavaScript on the server. Express is a framework on top of Node.js that listens for internet requests (Hypertext Transfer Protocol or HTTP requests) and routes them to the right code block. It exists to separate the sensitive logic (talking to the AI) from the browser.
-*   **OpenAI GPT-4o (AI Layer):** A Large Language Model (LLM) over an external API. It acts as the "brain," running clinical reasoning based on prompts we construct in the backend.
-*   **Vitest (Testing):** A testing framework that programmatically runs our code and checks if it behaves as expected. It ensures we don't accidentally break things when adding new features.
-*   **Docker:** A tool that packages all this software into standardized containers so it runs identically on any computer.
+This repository is a full-stack clinical decision support prototype with two core workflows:
 
-**How the System Flows (Visual Map)**
+1. Medication reconciliation across conflicting source records.
+2. Data quality assessment for a patient chart.
 
-```
-[ Clinician / User ] 
-       │
-       ▼ (Clicks "Run Reconciliation" in Browser)
-[ React Frontend UI ] 
-       │
-       ▼ (Sends JSON data via POST Request)
-[ Express Backend (Routes) ] 
-       │
-       ▼ (Validates data, passes to Service Layer)
-[ Backend Services ] 
-       │
-       ▼ (Builds a prompt string with medical rules)
-[ OpenAI API (External) ]
-       │
-       ▼ (Returns structured JSON recommendation)
-[ Backend Services ]
-       │
-       ▼ (Validates AI schema, passes to Route)
-[ In-Memory Store & Route ]  ---> (Saves audit copy to RAM)
-       │
-       ▼ (Sends HTTP 200 JSON Response)
-[ React Frontend UI ]
-       │
-       ▼ (Renders Confidence Gauge and Reasoning)
-[ Clinician / User ]
-```
+The frontend is a React SPA (Vite). The backend is Express on Node.js. The backend calls OpenAI (`gpt-4o`) using strict JSON-mode responses and then validates response shape before returning data to the UI. Results are persisted to in-memory arrays (not durable storage).
 
-**How Everything Relates**
-The frontend provides the forms and visualizations. When a user submits data, the frontend calls the backend API. The backend receives this data, formats it into a highly specific piece of text (a prompt), and sends it to the AI. The AI returns a decision. The backend then saves a permanent copy of this request-and-response pair into an in-memory store (a volatile database held in RAM) and finally passes the result back to the frontend to draw on the screen.
+The architecture is intentionally simple and prototype-oriented:
+- Fast iteration.
+- Clear separation of UI, API routes, business services, and external AI adapter.
+- No persistent DB.
+- No auth system; per-request API key forwarding is used.
 
 ---
 
-## How a Request Travels Through the System
+## 2. Runtime Architecture
 
-Let's trace a Medication Reconciliation request.
+### 2.1 Logical Layers
 
-1.  **User Action:** A clinician enters patient details into the `MedicationReconciliation.jsx` component and clicks "Run Reconciliation".
-2.  **Duplicate Check:** Before sending, `detectDuplicates` (in `duplicateDetection.js`) checks if there are clearly identical drugs. If yes, it shows a warning. If the user clicks "Submit Anyway", it proceeds.
-3.  **Frontend API Call:** The `api.reconcileMedication` function (in `api.js`) is called. It retrieves the OpenAI API key, prioritizing `VITE_OPENAI_API_KEY` first, then falling back to `localStorage`. It attaches it to an `Authorization` Bearer header, formats the patient data into a JSON (JavaScript Object Notation) payload, and sends it via a `POST` network request to the backend.
-4.  **Backend Route Handling:** The Express server receives the request at `medication.js` (`POST /api/reconcile/medication`). The route handler verifies the body has `sources` and `patient_context`, extracts the API key from the incoming `Authorization` header, and passes it downward.
-5.  **Service Layer & AI:** The route calls `reconcileService.reconcileMedications`. This service converts the JSON input into a literal string of text (the user prompt) describing the medications. It pairs this with a system prompt (instructions on how to be a clinical pharmacist) and calls `openaiService.callOpenAI`.
-6.  **AI Invocation:** `openaiService` sends the prompts to OpenAI, requesting a JSON object in return. If it hits an error or rate limit, it automatically waits and tries again (exponential backoff).
-7.  **Data Validation:** Once the AI responds, `openaiService.validateReconciliationResult` ensures every required field (like `confidence_score` and `reasoning`) is present. If it fails, the server asks OpenAI again or throws an error (HTTP 502 Bad Gateway).
-8.  **Data Persistence:** The route handler creates an audit record combining the input and output. It uses `ReconciliationResult.push(record)` to save it to our in-memory array database.
-9.  **Response:** The Express route responds to the frontend with an HTTP 200 OK status containing the AI results.
-10. **Frontend Rendering:** `MedicationReconciliation.jsx` receives the payload. It then passes the raw confidence score to `calibrateConfidenceScore` (in `calibration.js`) which adjusts the score mathematically based on source dates. Finally, it passes this data to `ConfidenceGauge.jsx` and re-renders the screen. If a webhook is configured in Local Storage, clicking approve/reject fires off a message via `webhook.js`.
+1. Presentation Layer: `frontend/src/pages/*`, `frontend/src/components/*`
+2. Client Integration Layer: `frontend/src/services/api.js`, `frontend/src/services/webhook.js`
+3. Transport Layer: Express routes in `EHR/src/routes/*`
+4. Domain/Prompt Layer: `EHR/src/services/reconcileService.js`, `EHR/src/services/dataQualityService.js`
+5. External AI Adapter: `EHR/src/services/openaiService.js`
+6. Persistence Stub: `EHR/src/models/*.js` (plain arrays)
 
----
+### 2.2 Data Flow (Medication Reconciliation)
 
-## How the AI Integration Works
+1. User edits form in `MedicationReconciliation.jsx`.
+2. Frontend validates required fields and duplicate heuristics.
+3. Frontend posts payload to `/api/reconcile/medication` through `api.js`.
+4. Route validates schema and extracts bearer key.
+5. Reconcile service builds system + user prompts.
+6. OpenAI adapter calls model with JSON response format.
+7. Route validates returned JSON fields.
+8. Route stores audit record in array model.
+9. Response returns to UI.
+10. UI calibrates confidence with deterministic rules and renders `ConfidenceGauge`.
 
-The AI layer relies entirely on the OpenAI Chat Completions API.
-*   **Prompts:** We don't just send raw data. We use "prompt engineering." Our backend has hardcoded "System Prompts" that explicitly instruct the AI to act as a clinical pharmacist or informaticist. These prompts contain exact rules (e.g., "Weighting rules you MUST apply: Recency"). 
-*   **JSON Enforcement:** The prompts explicitly command the AI to reply *only* in a specific JSON schema, avoiding conversational filler. We also pass `response_format: { type: 'json_object' }` to the OpenAI client to guarantee parsable code.
-*   **Validation:** LLMs can hallucinate (make things up) or skip constraints. Our code manually checks the AI's JSON keys before accepting the response. 
-*   **Caching:** Caching means storing previous answers so if you ask the exact same question again, you don't have to query the external server, saving time and money. This project explicitly has **no caching layer**. Every click results in a brand-new API call to OpenAI.
+### 2.3 Data Flow (Data Quality)
 
----
-
-## How the In-Memory Database Works
-
-An In-Memory Database stores data in the computer's Random Access Memory (RAM) rather than on a physical hard drive (like a standard SQL database).
-*   **Implementation:** In this project, it is literally just an empty JavaScript array exported from a file (e.g., `module.exports = [];`). 
-*   **How it is used:** Every time a valid API request completes, we `push()` an object representing the data into this array. 
-*   **Tradeoff:** It is incredibly fast and requires absolutely no setup, making it perfect for rapid prototyping. However, the exact moment the Node.js server shuts down or restarts, all data is instantly and permanently destroyed because RAM is volatile memory. 
-
----
-
-## How the Tests Are Structured
-
-Testing is how we programmatically prove our code works. This project uses **Vitest**, a test runner.
-*   **Frontend Logic Tests:** Files like `calibration.test.js` simply import a math function and feed it fake data, using `expect(result).toBe(...)` to verify the output matches expectations.
-*   **Component Tests:** Files like `Validation.test.jsx` use a simulated DOM (Document Object Model) to render React components invisibly. The test clicks buttons programmatically and checks if the correct error text appears.
-*   **Backend Node Tests:** Files like `reconcileService.test.js` import the backend service files directly within the test environment. Because we don't want to actually spend money calling OpenAI during automated tests, we use a concept called "Mocking." We use `vi.spyOn` to intercept the call to `openaiService.callOpenAI` and forcefully return a fake JSON response. We then verify our internal application logic handles that response properly. 
-*   **Running the suite:** You can run all tests by entering the `frontend/` folder and typing `npx vitest run`.
+1. User edits chart fields in `DataQuality.jsx`.
+2. Frontend validates demographics/date formats.
+3. Frontend posts payload to `/api/validate/data-quality`.
+4. Route validates request and extracts bearer key.
+5. Data quality service builds rubric prompt + record prompt.
+6. OpenAI adapter calls model.
+7. Route validates response schema.
+8. Route stores result in in-memory array.
+9. UI renders overall score, dimensional scores, and issue list.
 
 ---
 
-## How Everything Connects — Full Dependency Map
+## 3. Root-Level Files
 
-*This is a simplified logical tree showing what relies on what:*
-```
-[React App - main.jsx]
-  └── App.jsx
-       ├── index.css (Global Styles)
-       ├── ApiKeyPrompt.jsx (Global State Gate)
-       ├── DataQuality.jsx (Page)
-       │    ├── api.js (Network Calls -> Calls Backend /api/validate/data-quality)
-       │    └── thresholds.js (Color Logic)
-       ├── MedicationReconciliation.jsx (Page)
-       │    ├── api.js (Network Calls -> Calls Backend /api/reconcile/medication)
-       │    ├── ConfidenceGauge.jsx (UI)
-       │    ├── duplicateDetection.js (Pre-flight check)
-       │    ├── calibration.js (Post-flight adjustment)
-       │    └── webhook.js (Notification hook)
-       └── WebhookConfig.jsx (Page)
+## 3.1 `README.md`
 
-[Express Backend - server.js]
-  └── app.js (Express Setup)
-       ├── routes/index.js (Serves Frontend)
-       ├── routes/medication.js
-       │    ├── models/ReconciliationResult.js (Array pushing)
-       │    └── services/reconcileService.js
-       │         └── services/openaiService.js (External API to OpenAI)
-       └── routes/data.js
-            ├── models/DataQualityResult.js (Array pushing)
-            └── services/dataQualityService.js
-                 └── services/openaiService.js (External API to OpenAI)
-```
+Primary product documentation: setup, stack, endpoint contracts, scoring descriptions, and error semantics. It is mostly accurate and serves as API-level contract documentation.
 
----
+## 3.2 `WALKTHROUGH.md`
 
-## Per-File Sections: Backend Core
+This file (the one you are reading) is a deeper implementation walkthrough intended to match the actual code paths and explain interactions file-by-file.
 
-### EHR/src/app.js
+## 3.3 `.env`
 
-**What this file is**
-The configuration file that creates and sets up the Express web server framework.
+Local environment variables, loaded by backend startup in `EHR/src/server.js`.
+- `OPENAI_API_KEY` may be used as fallback if request header key is not provided.
+- `PORT` controls backend listen port.
 
-**What it does**
-It defines the middleware (code that runs between receiving a request and sending a response) for the application. It parses incoming JSON data and wires up the routing files so that specific URLs direct to specific code blocks.
+Security note: keep this file out of source control; rotate any exposed key immediately.
 
-**How it does it**
-*   `express()` initializes the application object.
-*   `app.use(cors())` applies Cross-Origin Resource Sharing middleware, ensuring the browser doesn't block frontend requests trying to reach the differently-ported backend API.
-*   `app.use(logger('dev'))` enables a request logger (Morgan) so that every network call prints cleanly in the terminal.
-*   `app.use(express.json())` configures the app to automatically translate raw incoming HTTP body strings into useable JavaScript Objects.
-*   `app.use('/', indexRouter)`, `app.use('/', medicationRouter)`, and `app.use('/', dataRouter)` inform the app that any request starting with `/` should be checked against the routes defined in those files.
-*   The final `app.use` is a "catch-all" error handler. If no route matches or a route crashes, this block catches the error and sends an HTTP 500 error code with a JSON response, preventing the server from crashing entirely.
+## 3.4 `.gitignore`
 
-**How it connects**
-This file imports routes from `EHR/src/routes/medication.js`, `EHR/src/routes/data.js`, and `EHR/src/routes/index.js`. Once set up, it passes the configured `app` object out using `module.exports` so that `server.js` can actually turn it on.
+Root ignore includes:
+- `node_modules`
+- `.env`
 
-**Key concepts to understand**
-*Middleware pattern:* The concept of passing an HTTP request through a chain of functions sequentially before responding. 
-*Express.js app object:* The core HTTP router standard for Node.js.
+This is critical for dependency bloat and secret hygiene.
 
----
+## 3.5 `docker-compose.yml`
 
-### EHR/src/server.js
+Two services:
+- `backend`: context `./EHR`, dockerfile `../Dockerfile.backend`, maps `3000:3000`.
+- `frontend`: context `./frontend`, dockerfile `../Dockerfile.frontend`, maps `4173:4173`.
 
-**What this file is**
-The main entry point script that physically starts the web server listening for internet traffic.
+`frontend` depends on `backend` for startup ordering. `VITE_API_URL` is set for frontend runtime config.
 
-**What it does**
-It acts as the launch button for the backend. First, it loads environment variables (like API keys) safely. Then, it checks if the OpenAI key exists. If so, it takes the configured `app.js` and fires up the HTTP listener on port 3000.
+## 3.6 `Dockerfile.backend`
 
-**How it does it**
-*   `require('dotenv').config(...)` reaches up a folder to find the hidden `.env` file and loads its contents into Node's `process.env` memory. 
-*   `if (!process.env.OPENAI_API_KEY)` is a safety check. If the required secret key is missing, it calls `process.exit(1)`, killing the server immediately before it even tries to boot.
-*   `var port = normalizePort(...)` ensures the `PORT` variable is a valid number.
-*   `var server = http.createServer(app)` wraps the Express logic from `app.js` inside native Node.js HTTP listeners.
-*   `server.listen(port)` opens the network socket on your computer so browsers can connect.
+Simple single-stage Node build:
+- Base `node:20-alpine`
+- Copy package manifests
+- `npm install`
+- Copy app source
+- Expose 3000
+- `npm start`
 
-**How it connects**
-This file imports `EHR/src/app.js`. It is completely standalone — nothing imports `server.js`; instead, you run `node server.js` from the command line to string the whole backend together.
+## 3.7 `Dockerfile.frontend`
 
-**Key concepts to understand**
-*Environment variables (`.env`):* Secure settings stored outside of source control so developers don't accidentally leak secret passwords to the public internet.
+Frontend build + preview image:
+- Base `node:20-alpine`
+- Install dependencies
+- `npm run build`
+- Expose 4173
+- Run `vite preview --host`
+
+## 3.8 `vercel.json` (root)
+
+Mixed deployment routing:
+- Frontend static build from `frontend/package.json`.
+- Backend function from `EHR/src/app.js`.
+- Routes `/api/*` to backend function.
+- Routes all others to frontend shell.
 
 ---
 
-### EHR/src/models/ReconciliationResult.js
+## 4. Backend: `EHR/`
 
-**What this file is**
-A temporary, volatile storage container for medication reconciliation audit records.
+## 4.1 Package and Local Data Files
 
-**What it does**
-It acts as an "in-memory database" for the app. Instead of talking to a real, complex database like PostgreSQL or MongoDB, this file provides a simple JavaScript array to hold records.
+### 4.1.1 `EHR/package.json`
 
-**How it does it**
-*   `module.exports = [];` simply returns an empty array when the file is imported.
+Defines backend runtime dependencies and one script:
+- `start`: `node ./src/server.js`
 
-**How it connects**
-It is imported by `EHR/src/routes/medication.js`. When the medication route successfully completes an AI call, it pushes the results into this array.
+Dependencies: `express`, `cors`, `morgan`, `openai`, `dotenv`, and helper packages.
 
-**Key concepts to understand**
-*In-memory data structures:* Variables held in RAM that disappear when the script stops running, used here as a placeholder for a permanent database.
+### 4.1.2 `EHR/package-lock.json`
 
----
+Dependency lockfile for reproducible installs.
 
-### EHR/src/models/DataQualityResult.js
+### 4.1.3 `EHR/test1.json`, `EHR/test2.json`
 
-**What this file is**
-A temporary, volatile storage container for data quality assessment audit records.
+Manual sample request payloads:
+- `test1.json`: data quality payload.
+- `test2.json`: medication reconciliation payload.
 
-**What it does**
-Similar to `ReconciliationResult.js`, it acts as an in-memory database to store raw patient inputs alongside AI scores.
+Useful for manual cURL/Postman testing.
 
-**How it does it**
-*   `module.exports = [];` exports a simple array list to the application.
+### 4.1.4 `EHR/out1.json`, `EHR/out2.json`
 
-**How it connects**
-Imported strictly by `EHR/src/routes/data.js` to persist data quality AI responses.
-
-**Key concepts to understand**
-*State persistence:* How software attempts to save data beyond the lifespan of a single HTTP request.
+Present as output placeholders; currently empty.
 
 ---
 
-### EHR/src/routes/index.js
+## 4.2 Backend Entry and App Composition
 
-**What this file is**
-A base route handler intended to serve static frontend files.
+### 4.2.1 `EHR/src/server.js`
 
-**What it does**
-It intercepts any request to the root URL `/` and sends back the HTML shell of our React Frontend.
+Backend process entrypoint.
 
-**How it does it**
-*   `router.get('/', function(...)` registers a listener for `GET` requests directly against the root domain.
-*   `res.sendFile(...)` calculates the file path to `public/index.html` and streams that file directly to the browser. 
+Responsibilities:
+1. Load root `.env` file.
+2. Import configured Express app from `app.js`.
+3. Log in-memory store readiness.
+4. Normalize and set port.
+5. Create Node HTTP server and start listening.
+6. Handle common listen errors (`EACCES`, `EADDRINUSE`).
 
-**How it connects**
-Imported by `EHR/src/app.js` and mounted to the `/` root.
+Design notes:
+- This file does not enforce global auth.
+- API key usage is delegated to service-level OpenAI client initialization.
 
-**Key concepts to understand**
-*Single Page Application (SPA) Serving:* The practice of having a backend server deliver a single blank HTML file to start a React app that then populates the screen itself using JavaScript.
+### 4.2.2 `EHR/src/app.js`
 
----
+Express app factory/configuration.
 
-### EHR/src/routes/medication.js
+Middleware pipeline:
+1. `cors()` for cross-origin browser requests.
+2. `morgan('dev')` request logging.
+3. `express.json()` body parser for JSON payloads.
+4. `express.urlencoded()` parser.
 
-**What this file is**
-The medication reconciliation API endpoint that orchestrates the flow of data between the frontend, the AI, and the database.
+Routers mounted:
+- `indexRouter`
+- `medicationRouter`
+- `dataRouter`
 
-**What it does**
-It receives incoming patient context and a list of conflicting medications from the browser. It ensures the data is valid, asks the AI service to resolve the conflicts, saves the result, and returns the AI's decision to the browser.
-
-**How it does it**
-*   `router.post('/api/reconcile/medication', async function(req, res, next)` creates an asynchronous endpoint to handle data creation.
-*   It immediately checks if `req.body` contains `sources` and `patient_context`. If not, it uses `res.status(400)` (Bad Request) to tell the frontend it sent invalid data.
-*   `await reconcileService.reconcileMedications(body)` delegates the complex AI prompting to a dedicated service folder. We `await` because calling OpenAI takes time (network delay).
-*   `openaiService.validateReconciliationResult(result)` confirms OpenAI followed instructions and returns `schemaError` if something is missing. If it is broken, we pass the error using `next(validationErr)`.
-*   A try/catch block creates a `record` object and calls `ReconciliationResult.push(record)`. If pushing to the array throws a random error, it logs the failure but crucially still sends the AI data back so the doctor isn't left empty-handed.
-*   `res.status(200).json(...)` returns the finalized JSON file to the user.
-
-**How it connects**
-It is attached to the main server in `EHR/src/app.js`. It depends heavily on `reconcileService.js` for logic, `openaiService.js` for validation, and `ReconciliationResult.js` for storage.
-
-**Key concepts to understand**
-*REST conventions:* Using standard URLs and HTTP methods (`POST` for creation) to design logical software boundaries.
-*Async/Await:* JavaScript syntactic sugar to pause code execution until a slow process (like reaching out to an external server) finishes executing.
+Error handling:
+1. 404 forwarding via `http-errors`.
+2. Final JSON error serializer:
+   - `message`
+   - `error` object in development, empty otherwise.
 
 ---
 
-### EHR/src/routes/data.js
+## 4.3 Models (In-Memory Persistence)
 
-**What this file is**
-The data quality assessment API endpoint that grades how complete a patient's record is.
+### 4.3.1 `EHR/src/models/ReconciliationResult.js`
 
-**What it does**
-It acts identically to `medication.js` but explicitly focuses on receiving raw patient demographics and condition files, grading them via AI, preserving to storage, and sending the score breakdown back.
+Exports `[]`.
 
-**How it does it**
-*   `router.post('/api/validate/data-quality', async function(...)` creates the path.
-*   Verifies the incoming `req.body` contains the `demographics` object.
-*   `await dataQualityService.assessDataQuality(body)` requests the AI calculation.
-*   Validates the result using `validateDataQualityResult(result)`.
-*   Pushes the parsed data into `DataQualityResult` structure.
-*   Sends the results back safely with a 200 HTTP code.
+Used as append-only runtime array for medication reconciliation audit records. Data disappears on process restart.
 
-**How it connects**
-Wired into `EHR/src/app.js`. Calls `dataQualityService.js` and saves to `DataQualityResult.js`.
+### 4.3.2 `EHR/src/models/DataQualityResult.js`
 
-**Key concepts to understand**
-*Status Codes:* The difference between a 200 (OK), 400 (Bad Request from the user), and 502 (Bad Gateway from OpenAI).
+Exports `[]`.
+
+Used similarly for data quality audit snapshots.
 
 ---
 
-## Per-File Sections: Backend Services & Architecture
+## 4.4 Routes
 
-### EHR/src/services/openaiService.js
+### 4.4.1 `EHR/src/routes/index.js`
 
-**What this file is**
-The core integration layer that handles all network communication with OpenAI's API.
+Defines `GET /` that serves `../public/index.html`.
 
-**What it does**
-It provides a single place for the backend to talk to the AI. It safely retrieves the secret API key, constructs a correctly formatted chat request using `gpt-4o`, handles network failures or rate limits (when the server tells you to slow down), and enforces strict rules on the JSON data that comes back. 
+Purpose:
+- Legacy SPA shell route from backend side.
 
-**How it does it**
-*   `getClient()` is a "singleton" pattern setup. It prevents creating the OpenAI client configuration thousands of times and throws a clear error if the API key is secretly missing.
-*   `attemptCall(systemPrompt, userPrompt)` is the raw networking function. It explicitly sets `response_format: { type: 'json_object' }` and lowers the AI "creativity" map `temperature: 0.2` so that the AI thinks more logically and identically every time rather than creatively guessing code parameters.
-*   `callOpenAI(systemPrompt, userPrompt)` is a wrapper around the attempt call. It uses a `while (attempt <= maxRetries)` loop with `await sleep(delay)` inside. If the API returns a 429 error (Too Many Requests), this creates "exponential backoff" (waiting 1 second, then 2, then 4) instead of hammering the broken connection. It also features a try/catch specifically parsing the JSON; if the AI returns broken text, it instantly retries the request behind the scenes.
-*   `validateReconciliationResult` and `validateDataQualityResult` manually inspect the parsed JSON objects. They loop through required field names (like `confidence_score` or `overall_score`) and push error strings if the AI missed one. If everything is perfect, they proudly return `null`, greenlighting the route handler to save to the database.
+Caveat:
+- Verify file existence under runtime packaging. If absent, this endpoint may fail and should be aligned with actual deployment strategy.
 
-**How it connects**
-It is heavily imported by `dataQualityService.js` and `reconcileService.js` every time a user invokes an AI route. It requires the `openai` external dependency package to exist. 
+### 4.4.2 `EHR/src/routes/medication.js`
 
-**Key concepts to understand**
-*Exponential Backoff:* An algorithm that spaces out repeated network retries increasingly longer to let an overloaded server recover.
-*Singleton Pattern:* Ensuring a memory-heavy object or global configuration is only instantiated exactly one time.
+Endpoint: `POST /api/reconcile/medication`.
 
----
+Flow:
+1. Extract `body` and bearer token key.
+2. Validate request shape:
+   - body must be object
+   - `sources` must be non-empty array
+   - `patient_context` must be object
+3. Call `reconcileService.reconcileMedications(body, apiKey)`.
+4. Validate AI schema using `openaiService.validateReconciliationResult`.
+5. Build `record` object with request+response fields and timestamps.
+6. Persist via `ReconciliationResult.push(record)`.
+7. On persist failure, log and attach warning to response.
+8. Return `200` JSON payload.
 
-### EHR/src/services/dataQualityService.js
+Error path:
+- Any thrown error is delegated to Express error middleware via `next(err)`.
 
-**What this file is**
-The natural language constructor that translates a patient's record into a highly specific instructions file for the AI's data grading tools.
+### 4.4.3 `EHR/src/routes/data.js`
 
-**What it does**
-It defines the strict grading rubric (points mapping to exact days stale) and the specific definitions for an issue's severity ("high" vs "medium"). It then takes the messy incoming JSON data, structures it into legible text, and asks the AI to evaluate it against the rubric.
+Endpoint: `POST /api/validate/data-quality`.
 
-**How it does it**
-*   `SYSTEM_PROMPT` is a permanent, static block of instructional text. It acts as the core ruleset constraint. By hardcoding "Score based on timeliness: 0-30 days old = 90-100", it removes ambiguity so the AI doesn't guess what "timely" means.
-*   `buildUserPrompt(body)` dynamically takes the request payload and pulls out demographics, medications, allergies, and conditions. If a field like allergies is null, it hardcodes "Not provided" into the string so the AI scores it as incomplete. 
-*   `new Date().toISOString()` computes today's literal date so the AI can do the math on how old a patient's record is.
-*   `assessDataQuality(body)` packages creating the user prompt and passing it along with the system prompt to `openaiService.callOpenAI`.
+Flow mirrors medication route, with specific validation:
+- body object required
+- `demographics` object required
 
-**How it connects**
-Imported by `EHR/src/routes/data.js` to begin evaluating the network data. Requires `EHR/src/services/openaiService.js` to execute the actual heavy lifting.
+Calls `dataQualityService.assessDataQuality(body, apiKey)`, validates with `validateDataQualityResult`, persists result to `DataQualityResult`, and returns response with optional warning on persist failure.
 
-**Key concepts to understand**
-*Prompt Chaining / System Instructions:* Giving a language model fixed behavior rules (System) that apply rigidly over changing dynamic inputs (User).
+### 4.4.4 `EHR/src/routes/users.js`
 
----
-
-### EHR/src/services/reconcileService.js
-
-**What this file is**
-The conversational constructor that forces the AI to safely reconcile different medication sources using strict clinical guidelines.
-
-**What it does**
-It ensures that when a patient has multiple conflicting medication records (like one dose from the hospital and a different dose from their primary care doctor), the AI weighs factors like recency and the patient's organic body functions (like kidney labs) to declare the best single drug choice safely.
-
-**How it does it**
-*   `SYSTEM_PROMPT` mandates four explicit rules: Recency, Source reliability, Pharmacy fill data, and Patient context. This prevents dangerous generic assumptions. It also enforces the specific final JSON schema requirement.
-*   `buildUserPrompt(body)` loops over the `body.sources` array, building an isolated block of text for each source and numbering them (`Source 1`, `Source 2`). It injects patient `recent_labs` (specifically targeting kidney eGFR scores) directly into the AI's context.
-*   `reconcileMedications(body)` packages the static system prompt and the dynamic user prompt, firing them to `openaiService`.
-
-**How it connects**
-Imported by `EHR/src/routes/medication.js`. Drives the core clinical logic before calling `openaiService.js`.
-
-**Key concepts to understand**
-*Declarative Validation:* Explicitly teaching a system how to handle edge cases before it evaluates raw data.
+Template scaffold route (`GET /` -> text response). Not mounted in `app.js`; effectively unused.
 
 ---
 
-## Per-File Sections: Docker Architecture
+## 4.5 Services
 
-### docker-compose.yml
+### 4.5.1 `EHR/src/services/openaiService.js`
 
-**What this file is**
-The orchestrator blueprint that lets you start both the frontend and backend simultaneously using a single command. 
+Core AI adapter and contract validator.
 
-**What it does**
-It defines "services" (mini isolated generic computers). It dictates that `backend` runs from the `EHR` folder and maps internal port `3000` to your computer's port `3000`. It dictates that `frontend` runs from the `frontend` folder, maps to port `4173`, and *depends* on the backend to finish starting first before trying to connect. 
+#### A. Client Construction Strategy
 
-**How it does it**
-*   `version: '3.8'` defines the syntax standard.
-*   Under `backend:`, `build: context: ./EHR` defines where the source code lives.
-*   `depends_on: - backend` ensures that Docker sequences the startup process so the UI doesn't crash trying to hit a sleeping API.
+`getClient(apiKey)` behavior:
+1. If explicit `apiKey` passed: create fresh OpenAI client for that request.
+2. Else: fallback to env key and singleton cached client.
+3. If neither exists: throw descriptive error.
 
-**How it connects**
-It lives in the project root and is executed via `docker-compose up --build` in your terminal. It points to the Dockerfiles. 
+This enables per-request keying while preserving a singleton for env-based operation.
 
-**Key concepts to understand**
-*Container orchestration:* Managing the deployment, routing, and scaling of multiple isolated application containers.
+#### B. Completion Invocation
 
----
+`attemptCall(systemPrompt, userPrompt, apiKey)`:
+- Calls `chat.completions.create` with:
+  - `model: 'gpt-4o'`
+  - `response_format: { type: 'json_object' }`
+  - system + user messages
+  - `temperature: 0.2`
 
-### Dockerfile.backend
+#### C. Retry and Parse Guard
 
-**What this file is**
-The exact assembly instructions for creating a custom, runnable image for the Express Node server.
+`callOpenAI(...)`:
+1. Retries 429 rate limits up to 3 times with backoff:
+   - 1000ms
+   - 2000ms
+   - 4000ms
+2. Wraps service errors with normalized status codes.
+3. Parses JSON and retries once if parse fails.
+4. Throws `502` if response remains invalid JSON after retry.
 
-**What it does**
-It tells Docker exactly how to build an isolated mini-computer from scratch that has everything needed to run the API, but absolutely nothing extra that could bloat or expose it.
+#### D. Response Schema Validators
 
-**How it does it**
-*   `FROM node:20-alpine` downloads an incredibly small version of Linux that comes with Node.js version 20 pre-installed.
-*   `WORKDIR /app` sets the current folder.
-*   `COPY package*.json ./` creates a layer caching the project's dependencies list.
-*   `RUN npm install` silently installs all the required server code.
-*   `COPY . .` grabs the rest of the actual logic like `server.js`.
-*   `CMD ["npm", "start"]` sets the final executable instruction when someone actually says "Run this container". 
+`validateReconciliationResult(result)` enforces:
+- `reconciled_medication`: non-empty string
+- `confidence_score`: number in [0, 1]
+- `reasoning`: non-empty string
+- `recommended_actions`: non-empty array
+- `clinical_safety_check`: non-empty string
 
-**How it connects**
-Only used when `docker-compose.yml` calls for it, or when someone manually types `docker build`. Located in the root directory.
+`validateDataQualityResult(result)` enforces:
+- `overall_score`: number in [0, 100]
+- `breakdown` object with numeric:
+  - `completeness`
+  - `accuracy`
+  - `timeliness`
+  - `clinical_plausibility`
+- `issues_detected`: array
 
-**Key concepts to understand**
-*Containerization:* Packaging code explicitly so it is fully agnostic to the Host OS (it works on Windows, Mac, or Linux identically).
+These validators protect downstream storage and API response quality.
 
----
+### 4.5.2 `EHR/src/services/reconcileService.js`
 
-### Dockerfile.frontend
+Medication prompt builder and orchestration service.
 
-**What this file is**
-The exact assembly instructions for creating a custom, runnable image for the React application.
+Contains:
+1. `SYSTEM_PROMPT` with mandatory weighting and schema constraints.
+2. `buildUserPrompt(body)` that serializes:
+   - patient age, conditions, labs
+   - each source system/med/date/reliability
+   - explicit task section + current date
+3. `reconcileMedications(body, apiKey)` delegating to `openaiService.callOpenAI`.
 
-**What it does**
-Very similar to the backend Dockerfile, but specifically tuned to build (compile) a modern frontend and serve it using Vite's static file preview server.
+Prompt engineering strategy:
+- Strong role framing.
+- Explicit decision rubric.
+- Explicit output schema.
+- Date injection for temporal reasoning context.
 
-**How it does it**
-*   Installs dependencies similarly (`RUN npm install`).
-*   `RUN npm run build` invokes Vite to compile all the React JSX files, CSS, and JS into single, minified, production-ready static assets.
-*   `CMD ["npm", "run", "preview", "--", "--host"]` tells Vite to act as a web server, safely delivering those minified static assets to browsers that request port `4173`, listening to all network traffic inside the container via `--host`.
+### 4.5.3 `EHR/src/services/dataQualityService.js`
 
-**How it connects**
-Only referenced by `docker-compose.yml` to build the `frontend` container element.
+Data quality rubric prompt builder.
 
-**Key concepts to understand**
-*Static Bundling:* React applications are just advanced build scripts. Browsers don't natively fully understand JSX syntax. The app is "built" into raw standard HTML/JS before it is served.
+Contains:
+1. `SYSTEM_PROMPT` specifying four dimensions:
+   - completeness
+   - accuracy
+   - timeliness
+   - clinical_plausibility
+2. Severity definitions (`high`, `medium`, `low`).
+3. Strict JSON schema requirement.
+4. `buildUserPrompt(body)` that serializes all relevant chart fields and current date.
+5. `assessDataQuality(body, apiKey)` delegation.
 
----
-
-## Per-File Sections: Frontend Architecture & Utilities
-
-### frontend/src/main.jsx
-
-**What this file is**
-The absolute very first file that the React application runs when the browser loads the page.
-
-**What it does**
-It hooks the React JavaScript code directly into the raw HTML structure of the webpage. Without this file, React would just be floating logic; this file explicitly grabs the `<div id="root">` element inside `index.html` and forces React to render the `App` component inside it.
-
-**How it does it**
-*   `ReactDOM.createRoot(document.getElementById('root'))` tells React exactly which HTML box to control.
-*   `.render(<React.StrictMode><App /></React.StrictMode>)` takes the entire application logic built inside `App.jsx` and draws it on screen. `StrictMode` is a tool that causes React to intentionally render things twice in development to hunt down hidden bugs.
-
-**How it connects**
-Imports `App.jsx` as the master component and `index.css` to load the global styling variables.
-
-**Key concepts to understand**
-*The Virtual DOM:* React doesn't build raw HTML immediately. It builds a virtual layout, compares it to the real browser screen, and mathematically calculates the fastest way to update changes.
-
----
-
-### frontend/src/App.jsx
-
-**What this file is**
-The core traffic controller and layout frame for the entire user interface.
-
-**What it does**
-It creates the sticky header bar (the title and navigation links) and keeps track of which "tab" or "page" the user is currently looking at. It also actively guards the app; if you haven't plugged in an OpenAI API key, it forces a popup dialog before letting you see any of the clinical tools.
-
-**How it does it**
-*   `const [hasKey, setHasKey] = useState(false)` creates a memory slot called state. The whole screen re-draws automatically whenever `setHasKey` is called.
-*   `useEffect` runs exactly once when the page loads. It checks `import.meta.env.VITE_OPENAI_API_KEY` followed by `localStorage` (the browser's long-term memory) to see if you mapped a key dynamically or saved one yesterday. If neither exists, it flips `showPrompt` to true.
-*   A custom event listener (`window.addEventListener('ehr_api_unauthorized')`) listens for downstream network failures. If an API call fails with a 401 Unauthorized because the key is broken or expired, this listener forcefully deletes the key from `localStorage` and pops the `ApiKeyPrompt` back open automatically.
-*   `const navItemStyle` is a function that changes the border color of the tabs depending on if `currentTab === tabId`, creating the visual illusion of clicking folders.
-*   It uses conditional rendering (`{currentTab === 'reconcile' && <MedicationReconciliation />}`) to instantly swap out what component is drawing the center of the screen without loading a new webpage.
-
-**How it connects**
-Imports the three main page components (`MedicationReconciliation.jsx`, `DataQuality.jsx`, `WebhookConfig.jsx`) and the `ApiKeyPrompt.jsx` security gate. 
-
-**Key concepts to understand**
-*React State & Effect hooks:* Variables that trigger an instant screen redraw when their values change, and functions that run automatically when components appear.
+Notable design choice:
+- Rubric is prompt-embedded rather than code-implemented scoring. The model performs scoring, while code enforces schema shape.
 
 ---
 
-### frontend/src/services/api.js
+## 5. Frontend: `frontend/`
 
-**What this file is**
-The central dispatcher for all external network requests leaving the browser.
+## 5.1 Build/Tooling Files
 
-**What it does**
-It packages the clinician's raw typed data into proper HTTP format, grabs the secret API key from the browser's storage, and physically fires the network shot at our Express Backend. If it breaks, it catches the error and throws an `ApiError`.
+### 5.1.1 `frontend/package.json`
 
-**How it does it**
-*   `fetchWithAuth(endpoint, options)` is a custom wrapper around the standard browser `fetch` tool. It intercepts the request to dynamically compute the API key (`import.meta.env.VITE_OPENAI_API_KEY || localStorage.getItem('ehr_api_key')`) and injects `'Authorization': Bearer ${apiKey}` before the packet leaves your laptop.
-*   If the backend returns an HTTP 401 status, it immediately dispatches an `ehr_api_unauthorized` window event before throwing an error, prompting the application state to kick the user back to the configuration modal.
-*   `if (!response.ok)` catches 4XX or 5XX status codes and attempts to parse the payload safely so the screen can display "Rate Limited" instead of instantly crashing. 
-*   `export const api` bundles two ready-to-use asynchronous actions: `reconcileMedication` and `validateDataQuality`.
+Defines Vite scripts (`dev`, `build`, `preview`), linting, and test dependencies (`vitest`, testing-library, jsdom).
 
-**How it connects**
-Imported by both page components whenever they need to talk to the backend. It targets `localhost:3000` (or whatever `VITE_API_URL` dictates).
+### 5.1.2 `frontend/package-lock.json`
 
-**Key concepts to understand**
-*Fetch API and Promises:* Asking an external computer for data is non-instant, necessitating a "Promise" to handle the data whenever it eventually answers.
+Dependency lockfile for deterministic installs.
 
----
+### 5.1.3 `frontend/vite.config.js`
 
-### frontend/src/services/webhook.js
+Sets React plugin and dev proxy:
+- `/api` -> `http://localhost:3000`
 
-**What this file is**
-An auxiliary networking layer that fires off real-time notifications when a clinician makes a decision.
+This avoids CORS pain in local dev by proxying API calls through Vite dev server.
 
-**What it does**
-If the clinic has registered a special notification URL (like a slack alert or an internal hospital logging system), this code shoots the finalized AI recommendation directly to them the moment the doctor clicks "Approve" or "Reject".
+### 5.1.4 `frontend/vitest.config.js`
 
-**How it does it**
-*   `export async function notifyWebhook(url, payload)` constructs a standard HTTP POST request.
-*   It explicitly sets `mode: 'no-cors'`. This allows the browser to send data across the internet to completely unknown servers without hitting security lockdown blocks (Cross-Origin Resource Sharing rules), guaranteeing the alert transmits.
+Test setup:
+- `environment: 'jsdom'`
+- `globals: true`
+- include patterns for frontend tests and selected backend test locations.
 
-**How it connects**
-Imported by `MedicationReconciliation.jsx` and fired exactly when the `handleDecision` button is pushed.
+### 5.1.5 `frontend/eslint.config.js`
 
-**Key concepts to understand**
-*Webhooks:* Instead of repeatedly asking "Did anything happen?", a webhook is a system that automatically shouts "Hey, this just happened!" to a preset address.
+Flat config with:
+- JS recommended rules
+- React hooks rules
+- React refresh plugin
+- custom no-unused-vars behavior
 
----
+### 5.1.6 `frontend/index.html`
 
-### frontend/src/utils/calibration.js
+SPA shell with `#root` element and module entry `src/main.jsx`.
 
-**What this file is**
-A mathematical post-flight adjustment engine for the raw AI confidence score.
+### 5.1.7 `frontend/vercel.json`
 
-**What it does**
-AI models can sometimes be wildly overconfident. This utility acts as a safety harness. It intercepts the score OpenAI returned and recalculates it based on hard, deterministic rules like: "If the newest chart is over 6 months old, the confidence score drops down regardless of what the AI claimed."
+SPA rewrite rule: all paths rewrite to `/index.html`.
 
-**How it does it**
-*   `calibrateConfidenceScore` creates a four-part `breakdown` with hardcoded weights (e.g., `weight: 0.3` for Recency).
-*   It runs a `sources.forEach` loop to calculate `daysDiff` using raw date math. Older dates drag the multiplier toward 0.3.
-*   It calculates `highestRel` by mapping the string words ("high", "low") to integers (1.0, 0.2).
-*   It finally returns an aggregated weighted average of `score = (breakdown.recency.score * breakdown.recency.weight) + ...` 
+### 5.1.8 `frontend/.gitignore`
 
-**How it connects**
-Called by `MedicationReconciliation.jsx` immediately after the network call answers but before the screen draws the UI gauge.
+Frontend-local ignores for logs, node_modules, build outputs, editor files.
 
-**Key concepts to understand**
-*Deterministic heuristics:* Hardcoded mathematical rules that act as guardrails against unpredictable AI variance.
+### 5.1.9 `frontend/README.md`
+
+Default Vite README template content.
+
+### 5.1.10 `frontend/test-output.txt`, `frontend/test-out2.txt`, `frontend/test-failures.log`
+
+Captured test execution outputs documenting earlier failures and partial fixes.
+
+### 5.1.11 `frontend/public/vite.svg` and `frontend/src/assets/react.svg`
+
+Template SVG assets.
 
 ---
 
-### frontend/src/utils/duplicateDetection.js
+## 5.2 Frontend App Entry and Shell
 
-**What this file is**
-A pre-flight safety scanner that prevents users from submitting logically broken data.
+### 5.2.1 `frontend/src/main.jsx`
 
-**What it does**
-Instead of spending money processing AI requests where the doctor accidentally typed the exact same medicine twice, this algorithm scans the data locally in the browser. Before the request leaves the laptop, it flags duplicate rows.
+Mounts React app into `#root`, wraps in `React.StrictMode`, imports global CSS and app root component.
 
-**How it does it**
-*   `const duplicates = []` holds the problematic arrays.
-*   A nested `for` loop (an $O(n^2)$ operation) checks every single row `i` against every remaining row `j`.
-*   `const drugNameA = nameA.split(' ')[0]` breaks down "Metformin 500mg" into just the root word "Metformin" so it can detect collisions even if the dosage string isn't identical.
-*   A `handled` Set guarantees that if three things are duplicate, it groups them efficiently rather than flagging pairs multiple times.
+### 5.2.2 `frontend/src/App.jsx`
 
-**How it connects**
-Called when the user clicks Submit on the reconciliation page. The response dictates whether the app halts with a warning or proceeds to the network.
+Top-level UI shell and global state coordinator.
 
-**Key concepts to understand**
-*Set Theory & Lookup Performance:* Using a `Set` object (like `handled.has()`) which allows instantaneous deduplication lookups rather than repeatedly looping through arrays.
+State:
+- `hasKey`: API key availability state
+- `showPrompt`: modal visibility
+- `currentTab`: active page (`reconcile`, `data`, `webhook`)
 
----
+Lifecycle logic:
+1. On mount, check key from env or localStorage.
+2. Register `ehr_api_unauthorized` event listener.
+3. On unauthorized event:
+   - clear local key
+   - force modal reopen
 
-## Per-File Sections: Frontend Pages, Components & Tests
-
-### frontend/src/pages/MedicationReconciliation.jsx
-
-**What this file is**
-The primary user interface page for the Medication Reconciliation tool.
-
-**What it does**
-It provides all the text boxes, dropdowns, and buttons for a clinician to input medical profiles. It ties all the data together, manages the complex loading states, calls the API, and then elegantly renders the result with a big gauge chart and "Approve/Reject" buttons.
-
-**How it does it**
-*   It initializes massive block arrays using `useState` bindings. `const [sources, setSources]` physically holds the form data. Every keystroke updates this object instantly.
-*   `handleSourceChange(index, field, value)` locates the specific row you are typing in and modifies it without wiping out the rest of the arrays.
-*   `validate()` is a strict client-side gatekeeper. It throws `validationErrors` directly onto the DOM if you try to submit blank dates.
-*   `handleRun(e, ignoreDuplicates)` catches the "Submit" click. It invokes `detectDuplicates`. If the user says "Submit Anyway," it skips the block, flips `setLoading(true)` so the button physically greys out, calls `api.reconcileMedication`, runs the `calibrateConfidenceScore` modifier, and stores everything in `setResult`.
-*   The final return block creates JSX (HTML inside Javascript) mixing map iterations (`sources.map`) to draw infinite rows of inputs based on array size.
-
-**How it connects**
-Imported by `App.jsx`. It acts as the glue unifying `duplicateDetection.js`, `calibration.js`, `api.js`, `webhook.js`, and `ConfidenceGauge.jsx`.
-
-**Key concepts to understand**
-*Controlled Components:* In React, input text boxes aren't read at the end like standard HTML. Instead, every keystroke overrides the component's state, and the state forces the text box to display its new value. 
+UI logic:
+- Sticky header
+- Tab buttons
+- Conditional page rendering
+- API key prompt modal handling
 
 ---
 
-### frontend/src/pages/DataQuality.jsx
+## 5.3 Frontend Components
 
-**What this file is**
-The user interface dashboard for assessing the structural health of a patient's medical file.
+### 5.3.1 `frontend/src/components/ApiKeyPrompt.jsx`
 
-**What it does**
-It presents a large input form collecting demographics and physiological records. Once submitted, it renders a high-level `Overall Score/100` alongside individual breakdown metrics, and maps out any errors detected by the AI in a clean alert list. 
+Modal component for API key input and storage.
 
-**How it does it**
-*   Constructs a giant form data object linked via `onChange={e => setFormData({...formData, x: e.target.value})}`.
-*   `handleRun` constructs an intricate custom JSON object payload matching the backend schemas explicitly (converting raw string arrays via `formData.allergies.split(',').map(...)`).
-*   `renderScoreIndicator` is a sub-component tool directly inside the file that automatically grabs the correct color coding (Red, Yellow, Green) from the `thresholds.js` file based on the raw integer score.
-*   A mapping loop displays every issue inside `result.issues_detected` using pill-shaped badges for High/Medium/Low priority.
+Behavior:
+1. Controlled password input.
+2. On submit, store trimmed key to localStorage.
+3. Trigger `onKeySave` callback.
+4. Optional cancel button controlled by `showCancel` prop.
 
-**How it connects**
-Imported by `App.jsx`. Tied directly to `api.js` and `thresholds.js`.
+Used as app-level gatekeeper to reduce unauthorized request attempts.
 
-**Key concepts to understand**
-*Payload Transformation:* Taking raw comma-separated user strings and parsing them into strictly validated backend JSON matrices before transmission.
+### 5.3.2 `frontend/src/components/ConfidenceGauge.jsx`
 
----
+Confidence visualization component.
 
-### frontend/src/components/ConfidenceGauge.jsx
+Inputs:
+- `score` in [0,1]
+- optional `breakdown` object
 
-**What this file is**
-A reusable visual component that draws the dynamic percentage bar.
-
-**What it does**
-It takes the mathematics from the AI confidence score and uses raw CSS styling to visually represent trust levels to the end user. If trust is high, the bar fills with green; if it is low, the bar shrinks and turns stark red to warn the doctor.
-
-**How it does it**
-*   Accepts `score` and `breakdown` arrays injected as props. Props are variables pushed downward from a parent component.
-*   Uses a simple CSS trick: `<div style={{ width: percentage + '%' }} />` to draw the horizontal bar length based on the `score` number.
-*   It injects classnames (`bg-red`, `text-yellow`) strictly tied to the percentage thresholds (under 50 = red, under 70 = yellow) to change the actual colors visually using styling from `index.css`.
-*   Utilizes the native HTML `<details>` and `<summary>` tags to make an accordion menu the user can click to expand and see the calibration math.
-
-**How it connects**
-Imported strictly by `MedicationReconciliation.jsx` to render the final response.
-
-**Key concepts to understand**
-*Component composition (Props):* The ability to write an isolated chunk of visual UI that takes parameters globally like a standard function.
+Behavior:
+1. Convert to percentage.
+2. Assign threshold color class:
+   - red < 50
+   - yellow < 70
+   - green otherwise
+3. Render progress bar and numeric label.
+4. If breakdown exists, render expandable detail list.
 
 ---
 
-### frontend/src/pages/WebhookConfig.jsx and ApiKeyPrompt.jsx
+## 5.4 Frontend Pages
 
-**What these files are**
-Utility UI overlays handling global application configurations stored externally.
+### 5.4.1 `frontend/src/pages/MedicationReconciliation.jsx`
 
-**What they do**
-They allow the application to accept setup secrets (API keys and URL paths) and persist them locally so they survive browser refreshes.
+Most feature-dense page.
 
-**How they do it**
-*   They rely exclusively on standard browser functions like `localStorage.setItem('key', value)` and `localStorage.getItem('key')`. 
-*   `ApiKeyPrompt.jsx` uses absolute positioning CSS styles (`z-index: 1000`) to completely hijack the user screen with a darkened translucent background, physically preventing you from clicking the app behind it until it secures a valid key.
-*   If a user is actively attempting to *update* an already valid key from the header bar, `ApiKeyPrompt.jsx` renders a secondary 'Cancel' button that closes the modal without irreversibly wiping the existing working `localStorage` key.
+#### A. State Model
 
-**How they connect**
-Imported by `App.jsx`, which strictly halts app propagation via an `if/else` block based on their inputs.
+- `patientContext`: age, conditions, egfr
+- `sources`: dynamic source list with system/med/date/reliability
+- `loading`, `result`, `error`
+- `duplicateWarning`, `validationErrors`
+- `decision` (approved/rejected/null)
 
-**Key concepts to understand**
-*Browser Storage:* The permanent local keystore embedded in all modern web browsers that doesn't rely on cookies or external databases.
+#### B. User Operations
+
+- Add/remove source rows
+- Edit source fields
+- Validate required fields
+- Run reconciliation
+- Approve/reject result and optionally dispatch webhook
+
+#### C. Submit Pipeline
+
+1. Prevent default.
+2. Run local validation.
+3. Run duplicate detection unless bypassed.
+4. Build backend payload:
+   - parse age and eGFR to numbers
+   - split comma conditions into array
+5. Call `api.reconcileMedication(...)`.
+6. Calibrate score via `calibrateConfidenceScore`.
+7. Render enriched result.
+
+#### D. Rendering Details
+
+- Left pane: forms + validation/errors.
+- Right pane: result card, safety badge, confidence gauge, reasoning, recommendations.
+- Decision controls shown only when undecided.
+
+### 5.4.2 `frontend/src/pages/DataQuality.jsx`
+
+Data quality form and results page.
+
+#### A. State
+
+- `formData` with demographics, meds, allergies, conditions, vitals, last_updated
+- `loading`, `result`, `error`, `validationErrors`
+
+#### B. Validation Rules
+
+- required: name, dob, gender
+- rough date parse checks for `dob` and `last_updated`
+
+#### C. Payload Builder
+
+Transforms form strings to backend schema:
+- `demographics` object
+- comma-separated lists -> arrays
+- `heart_rate` string -> integer or undefined
+- `vital_signs` object
+
+#### D. UI Rendering
+
+- Score cards for overall + dimensions.
+- Issue list with severity badge color mapping via `thresholds.js`.
+
+### 5.4.3 `frontend/src/pages/WebhookConfig.jsx`
+
+Webhook configuration utility page.
+
+Behavior:
+1. Load saved URL from localStorage on mount.
+2. Save validated URL.
+3. Clear URL.
+4. Show transient status message.
+
+Used by reconciliation decision flow to notify external systems.
 
 ---
 
-### frontend/src/index.css
+## 5.5 Frontend Services
 
-**What this file is**
-The global styling parameter file for the entire project.
+### 5.5.1 `frontend/src/services/api.js`
 
-**What it does**
-It defines the exact hex colors, shadows, radii, and fonts used globally. By defining them natively in `:root`, if we ever want to change the primary brand color from Blue to Purple, we change one line here and the entire app updates simultaneously.
+Central client API adapter.
 
-**How it does it**
-*   `:root { --primary-color: #2b6cb0; }` defines "css variables". 
-*   Below that, class maps like `.btn-primary { background-color: var(--primary-color) }` map those exact variables to reusable text names that any React element can invoke simply by slapping `className="btn-primary"` onto a block.
+Key pieces:
+1. `API_BASE_URL` from `VITE_API_URL`.
+2. `ApiError` class with status and payload.
+3. `fetchWithAuth` wrapper:
+   - retrieves key from env or localStorage
+   - sets `Authorization: Bearer <key>`
+   - throws on missing key
+   - dispatches unauthorized event on 401
+   - parses non-OK response body when possible
+4. Public methods:
+   - `reconcileMedication(patientContext, sources)`
+   - `validateDataQuality(patientRecord)`
 
-**How it connects**
-Imported exactly once at the absolute very top level of the ecosystem (`main.jsx`).
+### 5.5.2 `frontend/src/services/webhook.js`
 
-**Key concepts to understand**
-*CSS Variables (Custom Properties):* Centralizing color parameters specifically to avoid hardcoding exact fonts and hex numbers repetitively thousands of times across massive apps.
+Webhook sender utility.
+
+Behavior:
+- If URL missing, return soft failure object.
+- POST JSON payload + ISO timestamp.
+- Uses `mode: 'no-cors'`, so response visibility is limited and success may be opaque.
+- Returns best-effort status object.
 
 ---
 
-### Test Files (Overview)
+## 5.6 Frontend Utilities
 
-The project includes five unique test files executing across both server-like Logic flows and simulated DOM user interfaces.
+### 5.6.1 `frontend/src/utils/calibration.js`
 
-*   `__backend_tests__/dataQualityService.test.js` & `__backend_tests__/reconcileService.test.js`
-    These files use Native Node environments (using `require()`) and Mock modules via `vi.spyOn`. They artificially block outward network requests to OpenAI and intercept the function call inside the Express backend directly, replacing it with fake static JSON. This verifies the actual routes work without paying for AI credits. 
-*   `utils/calibration.test.js` & `utils/duplicateDetection.test.js`
-    Pure math tests. They run loops pushing complex boundary logic arrays through the post-flight calculator utilities and check if outputs stay within $>= 0.0$ and $<= 1.0$, throwing an automatic error if a score generates a bug like `1.2` or negative outputs.
-*   `pages/Validation.test.jsx`
-    A UI Interaction Test. It uses `@testing-library/react`. It literally renders `MedicationReconciliation` virtually in the background and simulates a robotic mouse clicking `fireEvent.click(screen.getByText('Run'))`. It confirms the app halts execution and successfully blocks the attempt to submit without an Age parameter inputted. 
+Deterministic post-model confidence calibration.
 
+Weights:
+- recency: 0.3
+- reliability: 0.3
+- agreement: 0.2
+- contextAlignment: 0.2
+
+Heuristics:
+1. Recency score based on age of newest source date.
+2. Reliability score from max reliability class observed.
+3. Agreement score from medication name token match ratio.
+4. Context alignment currently fixed baseline at `0.8`.
+
+Returns:
+- rounded score
+- per-dimension breakdown metadata for UI transparency.
+
+### 5.6.2 `frontend/src/utils/duplicateDetection.js`
+
+Duplicate grouping heuristic.
+
+Algorithm:
+- O(n^2) source comparison loop.
+- Normalize medication strings and compare first token (drug name approximation).
+- Group matching entries and avoid duplicate grouping via `Set`.
+
+Returns grouped duplicate arrays for warning UX.
+
+### 5.6.3 `frontend/src/utils/thresholds.js`
+
+Color mapping helpers:
+- `getDataQualityColor(score)` -> `red`, `yellow`, `green`, `gray`
+- `getSeverityBadgeColor(severity)` -> same token set
+
+---
+
+## 5.7 CSS
+
+### 5.7.1 `frontend/src/index.css`
+
+Global theme tokens and utility classes.
+
+Defines:
+- color variables
+- typography
+- layout primitives
+- card/button styles
+- badge/status classes
+
+Design caveat:
+- Some class names used in JSX are not defined as utilities here, so those styles may depend on inline CSS or missing utility declarations.
+
+---
+
+## 6. Tests
+
+## 6.1 Frontend Validation and Utility Tests
+
+### 6.1.1 `frontend/src/pages/Validation.test.jsx`
+
+Component tests for both main pages:
+- medication validation scenarios
+- data quality validation scenarios
+
+Uses mocked API service to avoid live network calls.
+
+### 6.1.2 `frontend/src/utils/calibration.test.js`
+
+Unit tests calibration behavior under reliability, recency, agreement/conflict, and output bounds.
+
+### 6.1.3 `frontend/src/utils/duplicateDetection.test.js`
+
+Unit tests duplicate detection grouping for similar/dissimilar medication records.
+
+## 6.2 Backend-Oriented Tests in Frontend Workspace
+
+### 6.2.1 `frontend/src/__backend_tests__/reconcileService.test.js`
+
+Node-environment tests for backend reconcile service with OpenAI call mocked.
+
+### 6.2.2 `frontend/src/__backend_tests__/dataQualityService.test.js`
+
+Node-environment tests for backend data quality service with OpenAI call mocked.
+
+---
+
+## 7. Operational Characteristics
+
+## 7.1 Persistence and Durability
+
+All persisted results are in-memory arrays. Restarting backend clears all prior records.
+
+## 7.2 Reliability
+
+OpenAI call reliability protections include:
+- rate-limit retries with exponential backoff
+- JSON parse retry
+- schema validation before route success
+
+## 7.3 Security Model
+
+Current model is lightweight and prototype-level:
+- API key provided from frontend env/localStorage and forwarded as bearer token.
+- No user auth/session management.
+- No server-side encrypted secret vault.
+
+## 7.4 Deployment Modes
+
+- Local dev via Vite proxy + Node backend.
+- Docker compose two-container orchestration.
+- Vercel config for mixed frontend/backend routing.
+
+---
+
+## 8. Known Gaps and Cleanup Candidates
+
+1. Remove or wire `EHR/src/routes/users.js`.
+2. Verify `EHR/src/routes/index.js` static path aligns with actual build/deploy artifact location.
+3. Consolidate and clean historical commentary in `frontend/src/services/api.js` and `frontend/src/services/webhook.js`.
+4. Align docs and comments where behavior has evolved.
+5. Consider persistent storage (SQLite/Postgres/Mongo) for audit durability.
+6. Consider centralized auth/key handling for production-hardening.
+
+---
+
+## 9. Quick Trace Cheatsheet
+
+Medication route stack:
+- `frontend/src/pages/MedicationReconciliation.jsx`
+- `frontend/src/services/api.js` -> `/api/reconcile/medication`
+- `EHR/src/routes/medication.js`
+- `EHR/src/services/reconcileService.js`
+- `EHR/src/services/openaiService.js`
+- `EHR/src/models/ReconciliationResult.js`
+
+Data quality route stack:
+- `frontend/src/pages/DataQuality.jsx`
+- `frontend/src/services/api.js` -> `/api/validate/data-quality`
+- `EHR/src/routes/data.js`
+- `EHR/src/services/dataQualityService.js`
+- `EHR/src/services/openaiService.js`
+- `EHR/src/models/DataQualityResult.js`
+
+This map is the fastest way to debug request/response behavior end-to-end.
